@@ -16,7 +16,7 @@
 | 写手机或 RK3566 平板端程序 | [蓝牙与串口协议](docs/protocol.md) |
 | 查针脚、电源、屏幕与传感器连接 | [硬件连接说明](docs/hardware.md) |
 | 分工、修改代码、提交给队友 | [团队协作流程](docs/team-workflow.md) |
-| 看当前需求和检查记录 | [需求对照](REQUIREMENTS.md)、[验证记录](VALIDATION.md) |
+| 看当前需求与功能进度 | [需求对照](REQUIREMENTS.md) |
 
 ## 1. 下载项目并准备开发环境
 
