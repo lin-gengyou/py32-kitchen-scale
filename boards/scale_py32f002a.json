@@ -1,0 +1,20 @@
+{
+  "build": {
+    "core": "py32",
+    "cpu": "cortex-m0plus",
+    "mcu": "py32f002ax5",
+    "f_cpu": "8000000L",
+    "extra_flags": "-DPY32F002Ax5",
+    "ldscript": "ldscripts/scale_py32f002a.ld"
+  },
+  "frameworks": ["py32f0sdk"],
+  "name": "Electronic Scale PY32F002AF15P6TU (PB0 LED)",
+  "upload": {
+    "maximum_ram_size": 3072,
+    "maximum_size": 16384,
+    "protocol": "custom",
+    "protocols": ["custom"]
+  },
+  "url": "https://www.puyasemi.com/py32f002a.html",
+  "vendor": "Custom"
+}

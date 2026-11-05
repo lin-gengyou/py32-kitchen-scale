@@ -1,0 +1,4 @@
+{
+  "files.associations": {"*.h": "c", "*.c": "c", "*.ld": "c"},
+  "files.encoding": "utf8"
+}

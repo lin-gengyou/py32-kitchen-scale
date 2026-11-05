@@ -1,0 +1,22 @@
+{
+  "version": "v1.0.2",
+  "protocol": 2,
+  "source_sha256": {
+    "boards/scale_py32f002a.json": "68ee09365b0448fa9b20897270ea51b4857c1d5ec27d2887ebb692556e759060",
+    "include/py32f0xx_hal_conf.h": "2e7a8de892656a1886231c1ebe2bbd9e348bb6244f0d34b100f27c24d3d5126f",
+    "include/scale_config.h": "e2606eaeb28f10f4ff39322a7538abcab5ca66267e60f6c22ef62541cbd385b8",
+    "include/weight_state.h": "d49d46442fe9fed2513042d8dce78a2f31efc661317435ad1051d5e25ed1e6e5",
+    "ldscripts/scale_py32f002a.ld": "cabdab17e2b906eca7d9633fd5d9dcd19cd1909c824aee3b5900427b285e692b",
+    "platformio.ini": "bb56c9228844d823362fe826a74e672a292ab2290e840c4d3604a3cddf612bb3",
+    "src/interrupts.c": "a1e50cd591bcf6a677e884f92e09860c478b61be35f768cce750adeea5a85747",
+    "src/main.c": "08a7890638a42d4f828728e62934eefb20821b3d9cdfe1fa53406ce91018155f",
+    "src/scale_basic.c": "0692ed771e531d16def909994164a03833ed73a6c06d3f836b70d3d412ee7650",
+    "src/scale_config.c": "e9c5a1be85572e7337b86624dd93095080173d8105bd0a2db4ebdb3cb36d95a6",
+    "src/system_clock.c": "822f850c5b9b9844aef548259e3fdd623e730d52982841814c7218f946763f06",
+    "tools/package_firmware.py": "3575c9b7c315b4b6ad6bbd2c570acee4551151cb311663c8387eaaabd25f00db",
+    "tools/pio_size.py": "54b1a1b00119d91796430cff1b3e15d7cf42b2a7838535d5ffac204cc786d501",
+    "tools/pio_upload.py": "0e7ede557bb6a212794e68c0bf2c88d3a71f4470167cd6613f7b13e46fea5ff2",
+    "tools/run_host_checks.py": "8b4e3297c6cc84fec141e53e92b182f3b912b631ebdd7199b5c4478c7142db66",
+    "tools/setup_pack.py": "7aa7c6392bde11a8f29d9829dc9d5266b62976de80588ec5ea8ef9058631c1fc"
+  }
+}

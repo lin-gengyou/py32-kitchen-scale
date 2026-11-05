@@ -1,0 +1,13 @@
+.pio/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+packs/*.pack
+__pycache__/
+*.py[cod]
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
