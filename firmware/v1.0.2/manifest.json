@@ -13,7 +13,7 @@
     "src/scale_basic.c": "0692ed771e531d16def909994164a03833ed73a6c06d3f836b70d3d412ee7650",
     "src/scale_config.c": "e9c5a1be85572e7337b86624dd93095080173d8105bd0a2db4ebdb3cb36d95a6",
     "src/system_clock.c": "822f850c5b9b9844aef548259e3fdd623e730d52982841814c7218f946763f06",
-    "tools/package_firmware.py": "3575c9b7c315b4b6ad6bbd2c570acee4551151cb311663c8387eaaabd25f00db",
+    "tools/package_firmware.py": "f637427469d98357d7472ad3fdef235f87f8f18eda6750069d7a919d7914d313",
     "tools/pio_size.py": "54b1a1b00119d91796430cff1b3e15d7cf42b2a7838535d5ffac204cc786d501",
     "tools/pio_upload.py": "1510b0a8a554377335be200887903fcded5bfde3cc702dc821ea752309569051",
     "tools/run_host_checks.py": "8b4e3297c6cc84fec141e53e92b182f3b912b631ebdd7199b5c4478c7142db66",
