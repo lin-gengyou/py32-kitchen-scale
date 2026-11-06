@@ -22,3 +22,5 @@ DFP文件SHA-256：`bf3ddd933f28f4557c90a8070cbc834bd3869ff88e53a8b20d80e79c51f8
 - https://docs.platformio.org/en/latest/core/userguide/cmd_run.html
 
 项目原理图、需求/设计文档与PCB图放在`docs/`对应目录。两份项目手册对应固件1.0.2的2026-11-05源码快照。
+
+2026-11-06更新连接配置：默认SWD改为100kHz，上传输出DEBUG日志，加入外部供电的J-Link选项与连接诊断入口。当前下载参数和ARM V9接线步骤见README及`upload-troubleshooting.md`。

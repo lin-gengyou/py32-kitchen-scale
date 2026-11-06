@@ -75,13 +75,15 @@ pio run -e scale_basic
 
 ## 3. 连接烧录器和秤板
 
-使用 **支持 5V 目标 SWD 电平的 CMSIS-DAP 烧录器**，例如配置为目标电压参考模式的 PWLINK2 Lite。秤板由自身电源供电，烧录器使用 USB 连接电脑。
+使用 **支持 5V 目标 SWD 电平的烧录器**。pyOCD统一对接CMSIS-DAP和安装驱动后的J-Link；PWLINK2 Lite使用目标电压参考模式。秤板由自身电源供电，烧录器使用USB连接电脑。
 
 PWLINK2 Lite 在 PowerWriter 客户端中先选择 **接口电平 → 外部输入 → 应用 → 保存全局上电设置**。完成设置后断电接四线，再给秤板供电。烧录器的专用 5V 供电输出脚在此连接方式中保持空置。
 
 H4 的 VCC5V 给烧录器提供目标电压参考。主控以 5V 工作时，输入高电平保证值为 `0.7 × VCC = 3.5V`；烧录器的 SWD 信号使用对应的目标电平。[主控数据手册第 42 页](https://www.puyasemi.com/download_path/数据手册/MCU%20微处理器/PY32F002A系列数据手册_V1.1.pdf#page=42)
 
 更详细的针脚、H1 传感器接口和 FPC 定义见 [硬件连接说明](docs/hardware.md)。
+
+**ARM V9 / J-Link类下载器**：这款外壳贴纸标注VOUT=3.3V，Vtref与VOUT出厂默认内部短接。先断电，按厂家说明断开这个内部短接，再把秤板5V接Vtref参考输入；VOUT和19脚5V输出保持空置。分步接线、测量与诊断见 [ARM V9 首次连接](docs/upload-troubleshooting.md)。
 
 ## 4. 烧录与首次点灯
 
@@ -100,9 +102,21 @@ pio run -e scale_py32f002a -t upload
 pio run -e scale_basic -t upload
 ```
 
-上传使用 pyOCD、目标 `py32f002ax5`、1MHz SWD、扇区擦除和软件复位。CMSIS-DAP 上传按 USB 调试接口工作，串口 COM 号用于 UART 调试。
+上传使用pyOCD、目标`py32f002ax5`、默认**100kHz SWD**、扇区擦除和软件复位，并输出详细连接日志。速度由`platformio.ini`的`custom_swd_frequency`设置。外部供电时配置`jlink.power=false`，上传过程保持J-Link目标供电请求关闭。CMSIS-DAP与J-Link上传使用USB调试接口，串口COM号用于UART调试。
 
 正常上传保留最后 4KB 配置扇区。整片擦除后，重新执行第 6 节标定。
+
+连接诊断在PlatformIO终端运行：
+
+```powershell
+python tools/swd_diagnose.py --uid jlink:
+```
+
+CMSIS-DAP可运行`python tools/swd_diagnose.py`。脚本先列出下载器，再以100kHz连接并读取CPUID、RAM和Flash开头，将详细结果写入`logs/swd-*.log`。诊断会暂停内核，结束后按SW1复位恢复运行。上传时的日志可保存为：
+
+```powershell
+pio run -v -e scale_py32f002a -t upload 2>&1 | Tee-Object upload.log
+```
 
 ## 5. 接入称重传感器并查看数据
 

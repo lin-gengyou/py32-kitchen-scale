@@ -1,4 +1,4 @@
-"""适配 PY32F002A 的 SDK 系统文件路径，并配置 CMSIS-DAP 上传命令。"""
+"""适配 SDK 系统文件，并配置外部供电、低速 SWD 的 pyOCD 上传命令。"""
 from pathlib import Path
 
 Import("env")
@@ -9,11 +9,16 @@ framework = Path(env.PioPlatform().get_package_dir("framework-py32f0sdk"))
 env.Append(CPPPATH=[str(framework / "CMSIS" / "Device" / "PY32F0xx" / "Source")])
 uploader = Path(env.PioPlatform().get_package_dir("tool-pyocd")) / "pyocd.py"
 pack = project / "packs" / "Puya.PY32F0xx_DFP.1.2.20.pack"
-# 固定芯片和 DFP，使用 1MHz SWD。关闭自动解锁，保留受保护芯片的处理选择。
+# 杜邦线首次联调使用 100kHz，可在 platformio.ini 中调整。
+frequency = int(env.GetProjectOption("custom_swd_frequency", "100000"))
+if frequency <= 0:
+    raise ValueError("custom_swd_frequency 必须为正整数，单位 Hz")
+# 秤板独立供电：禁止 J-Link 后端主动请求开启目标供电。
+# 此选项不控制 ARM V9 的内部 Vtref/VOUT 物理短接开关。
 env.Replace(
-    UPLOADCMD='"$PYTHONEXE" "{}" load --target py32f002ax5 '
-    '--pack "{}" --erase sector --frequency 1000000 -O connect_mode=halt '
-    '-O reset_type=sysresetreq -O auto_unlock=false "$SOURCE"'.format(
-        uploader, pack
+    UPLOADCMD='"$PYTHONEXE" "{}" load -vv --target py32f002ax5 '
+    '--pack "{}" --erase sector --frequency {} -O connect_mode=halt '
+    '-O reset_type=sysresetreq -O auto_unlock=false -O jlink.power=false "$SOURCE"'.format(
+        uploader, pack, frequency
     )
 )
