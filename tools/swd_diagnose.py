@@ -69,7 +69,7 @@ def main():
     connection = [python, entry, "commander", "--target", "py32f002ax5", "--pack", str(PACK),
                   "--frequency", str(args.frequency), "--connect", "halt", "--no-wait", "-vv",
                   "--color", "never", "-O", "reset_type=sysresetreq", "-O", "auto_unlock=false",
-                  "-O", "jlink.power=false"]
+                  "-O", "jlink.power=false", "-O", "jlink.non_interactive=false"]
     if args.uid:
         connection += ["--uid", args.uid]
     for command in ("show probe-uid", "show target", "read32 0xe000ed00 4",

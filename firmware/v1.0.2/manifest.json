@@ -15,9 +15,9 @@
     "src/system_clock.c": "822f850c5b9b9844aef548259e3fdd623e730d52982841814c7218f946763f06",
     "tools/package_firmware.py": "f637427469d98357d7472ad3fdef235f87f8f18eda6750069d7a919d7914d313",
     "tools/pio_size.py": "54b1a1b00119d91796430cff1b3e15d7cf42b2a7838535d5ffac204cc786d501",
-    "tools/pio_upload.py": "1510b0a8a554377335be200887903fcded5bfde3cc702dc821ea752309569051",
+    "tools/pio_upload.py": "62bcd830d680259259ec60af935359e79dac10de78592510c70fa53592e09969",
     "tools/run_host_checks.py": "8b4e3297c6cc84fec141e53e92b182f3b912b631ebdd7199b5c4478c7142db66",
     "tools/setup_pack.py": "7aa7c6392bde11a8f29d9829dc9d5266b62976de80588ec5ea8ef9058631c1fc",
-    "tools/swd_diagnose.py": "fcf4e8b27490461a2737f81398a80edf262bee5c112001aadaeb4818e9e1e3f8"
+    "tools/swd_diagnose.py": "4022a72b1ea3209728cc418c2f25c6ae8273fcddd8af6cfed04a19deec69e658"
   }
 }

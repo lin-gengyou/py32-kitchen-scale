@@ -55,7 +55,13 @@ CMSIS-DAP使用`python tools/swd_diagnose.py`。有多个下载器时，在`--ui
 pio run -v -e scale_py32f002a -t upload 2>&1 | Tee-Object upload.log
 ```
 
-当前参数：100kHz SWD、`connect_mode=halt`、`reset_type=sysresetreq`、`auto_unlock=false`、`jlink.power=false`。要降低到50kHz，在`platformio.ini`中设置`custom_swd_frequency = 50000`；连接正常后可提高速度。
+当前参数：100kHz SWD、`connect_mode=halt`、`reset_type=sysresetreq`、`auto_unlock=false`、`jlink.power=false`、`jlink.non_interactive=false`。要降低到50kHz，在`platformio.ini`中设置`custom_swd_frequency = 50000`；连接正常后可提高速度。
+
+### J-Link 软件兼容设置
+
+项目固定的pyOCD 0.36会先调用`disable_dialog_boxes()`，再调用J-Link的`open()`。J-Link DLL 9.14及以上版本在这个顺序下存在已知连接问题，上游在[PR #1927](https://github.com/pyocd/pyOCD/pull/1927)中修复。上传和诊断脚本设置`jlink.non_interactive=false`，允许SDK显示对话框，从而跳过这次提前调用。
+
+两个脚本同时设置`jlink.power=false`，跳过`SupplyPower = 1`命令。旧上传脚本没有覆盖pyOCD的供电默认值；不支持软件供电控制的下载器可能在此处抛出J-Link异常，随后被转换为`Memory transfer fault`。
 
 ## 4. 按日志定位
 

@@ -104,6 +104,8 @@ pio run -e scale_basic -t upload
 
 上传使用pyOCD、目标`py32f002ax5`、默认**100kHz SWD**、扇区擦除和软件复位，并输出详细连接日志。速度由`platformio.ini`的`custom_swd_frequency`设置。外部供电时配置`jlink.power=false`，上传过程保持J-Link目标供电请求关闭。CMSIS-DAP与J-Link上传使用USB调试接口，串口COM号用于UART调试。
 
+J-Link同时设置`jlink.non_interactive=false`，允许SDK显示对话框，跳过pyOCD 0.36在打开设备前关闭弹窗的调用。这用于规避J-Link DLL 9.14及以上版本的已知打开顺序问题，详见[上游修复说明](https://github.com/pyocd/pyOCD/pull/1927)。
+
 正常上传保留最后 4KB 配置扇区。整片擦除后，重新执行第 6 节标定。
 
 连接诊断在PlatformIO终端运行：

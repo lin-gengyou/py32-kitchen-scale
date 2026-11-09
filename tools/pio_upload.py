@@ -15,10 +15,13 @@ if frequency <= 0:
     raise ValueError("custom_swd_frequency 必须为正整数，单位 Hz")
 # 秤板独立供电：禁止 J-Link 后端主动请求开启目标供电。
 # 此选项不控制 ARM V9 的内部 Vtref/VOUT 物理短接开关。
+# pyOCD 0.36 会在 open() 前调用 disable_dialog_boxes()，与 J-Link DLL 9.14+
+# 存在已知兼容问题。允许 SDK 弹窗以跳过这次提前调用；见上游 PR #1927。
 env.Replace(
     UPLOADCMD='"$PYTHONEXE" "{}" load -vv --target py32f002ax5 '
     '--pack "{}" --erase sector --frequency {} -O connect_mode=halt '
-    '-O reset_type=sysresetreq -O auto_unlock=false -O jlink.power=false "$SOURCE"'.format(
+    '-O reset_type=sysresetreq -O auto_unlock=false -O jlink.power=false '
+    '-O jlink.non_interactive=false "$SOURCE"'.format(
         uploader, pack, frequency
     )
 )
