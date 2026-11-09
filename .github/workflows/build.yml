@@ -31,7 +31,7 @@ jobs:
       - run: pio run -e scale_py32f002a -e scale_basic -e scale_py32f002a_jlink -e scale_basic_jlink
       - run: pio run -e scale_py32f002a -e scale_basic -e scale_py32f002a_jlink -e scale_basic_jlink -t nobuild
       - run: python tools/swd_diagnose.py --dry-run
-      - run: python tools/swd_diagnose.py --dry-run --uid jlink:
+      - run: 'python tools/swd_diagnose.py --dry-run --uid jlink:'
       - uses: actions/upload-artifact@v4
         with:
           name: py32-scale-${{ github.sha }}
