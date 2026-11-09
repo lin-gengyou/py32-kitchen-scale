@@ -39,6 +39,7 @@ HAL_StatusTypeDef HAL_FLASH_Program(uint32_t type, uintptr_t address, uint32_t *
 
 GPIO_TypeDef host_gpio_a, host_gpio_b;
 USART_TypeDef host_usart;
+bool host_dbg_clock_enabled, host_iwdg_frozen;
 
 static void command(const char *input, const char *expected, uint32_t now)
 {
@@ -129,6 +130,12 @@ static void storage_checks(void)
 
 int main(void)
 {
+    /* 没有先开启调试时钟时，冻结寄存器写入不应被模拟为有效。 */
+    host_dbg_clock_enabled = false;
+    host_iwdg_frozen = false;
+    watchdog_start();
+    assert(host_dbg_clock_enabled && host_iwdg_frozen && watchdog_ready);
+    watchdog_ready = false;
     storage_checks();
     scale_config_load(&saved_config);
     uint32_t now = 0;

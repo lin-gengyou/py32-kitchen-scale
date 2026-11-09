@@ -2,12 +2,14 @@
 #define SCALE_HOST_HAL_H
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 /* 供桌面回归检查使用，只模拟本固件涉及的 GPIO/USART 接口。 */
 typedef struct { volatile uint32_t IDR, BSRR, ODR; } GPIO_TypeDef;
 typedef struct { volatile uint32_t SR, DR, CR1, CR2, CR3, BRR; } USART_TypeDef;
 typedef struct { uint32_t Mode, Pull, Speed, Pin, Alternate; } GPIO_InitTypeDef;
 extern GPIO_TypeDef host_gpio_a, host_gpio_b;
 extern USART_TypeDef host_usart;
+extern bool host_dbg_clock_enabled, host_iwdg_frozen;
 #define GPIOA (&host_gpio_a)
 #define GPIOB (&host_gpio_b)
 #define USART1 (&host_usart)
@@ -38,12 +40,13 @@ extern USART_TypeDef host_usart;
 #define __HAL_RCC_GPIOA_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_GPIOB_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_USART1_CLK_ENABLE() ((void)0)
+#define __HAL_RCC_DBGMCU_CLK_ENABLE() (host_dbg_clock_enabled = true)
 #define __NOP() ((void)0)
 #define __disable_irq() ((void)0)
 #define __get_PRIMASK() (0U)
 #define __set_PRIMASK(mask) ((void)(mask))
 #define __WFI() ((void)0)
-#define __HAL_DBGMCU_FREEZE_IWDG() ((void)0)
+#define __HAL_DBGMCU_FREEZE_IWDG() (host_iwdg_frozen = host_dbg_clock_enabled)
 #define HAL_Init() ((void)0)
 #define HAL_GetTick() (0U)
 #define HAL_RCC_GetPCLK1Freq() (8000000U)

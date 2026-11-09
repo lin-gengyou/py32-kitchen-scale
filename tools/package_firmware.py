@@ -31,7 +31,7 @@ def main():
     (dest / "SHA256SUMS").write_text("\n".join(hashes) + "\n", encoding="utf-8", newline="\n")
     files = [p for folder in ("src", "include", "boards", "ldscripts", "tools")
              for p in (root / folder).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
-    files.append(root / "platformio.ini")
+    files.extend([root / "platformio.ini", root / "pyocd.yaml"])
     manifest = {"version": version, "protocol": 2, "source_sha256": {
         p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)
     }}

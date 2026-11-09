@@ -65,6 +65,14 @@ pio run -v -e scale_py32f002a -t upload 2>&1 | Tee-Object upload.log
 
 Upload入口会自动准备并校验DFP。正常构建生成ELF、HEX和BIN；`nobuild`入口按现有ELF生成HEX后下载。HEX中包含地址，BIN在其他烧录软件中的起始地址为`0x08000000`。
 
+### 看门狗的调试冻结
+
+固件先开启DBGMCU时钟，再设置IWDG冻结位。项目根目录`pyocd.yaml`同时把DFP的`DbgMCU_APB_Fz1`设为`0x00001000`，使`DebugCoreStart`设置bit12，而不再用默认0覆盖看门狗冻结配置。冻结只作用于内核暂停期间，正常运行仍保留看门狗保护。
+
+pyOCD在首次准备Flash算法时默认执行`reset_and_halt()`；成功的系统复位会清除旧固件的SysTick配置。因此，不能仅凭固件调用`HAL_Init()`或FLM中没有`cpsid i`就认定是中断干扰。`Memory transfer fault`表示调试访问失败，与CPU的HardFault不是同一个诊断结果。
+
+当前PY32的pack目标继承通用`CoreSightTarget`，DFP没有提供`DebugDeviceUnlock`序列。`auto_unlock=true`本身不能补出PY32专用的读保护解除流程；Flash读取异常也不等同于确认读保护。项目保持`auto_unlock=false`。
+
 ## 4. 按日志定位
 
 | 现象 | 下一步 |

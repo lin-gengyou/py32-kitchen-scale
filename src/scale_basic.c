@@ -1017,6 +1017,17 @@ static void alarm_poll(uint32_t now)
     alarming = fault;
 }
 
+/* 调试冻结寄存器依赖 DBGMCU 时钟。冻结仅在内核暂停时生效，正常运行仍由看门狗保护。 */
+static void watchdog_start(void)
+{
+    __HAL_RCC_DBGMCU_CLK_ENABLE();
+    __HAL_DBGMCU_FREEZE_IWDG();
+    watchdog.Instance = IWDG;
+    watchdog.Init.Prescaler = IWDG_PRESCALER_256;
+    watchdog.Init.Reload = 511;
+    watchdog_ready = HAL_IWDG_Init(&watchdog) == HAL_OK;
+}
+
 /* 主循环按顺序轮询各外设。LED 心跳与串口上报分开计时，关掉上报仍能看见运行状态。 */
 int main(void)
 {
@@ -1039,11 +1050,7 @@ int main(void)
     uint32_t power_ms = started_ms;
     idle_since_ms = started_ms;
     /* 独立看门狗由 LSI 驱动，约 4 秒未回到主循环时复位，实际时长受 LSI 误差影响。 */
-    __HAL_DBGMCU_FREEZE_IWDG(); /* SWD 暂停内核时冻结看门狗，便于再次下载和调试。 */
-    watchdog.Instance = IWDG;
-    watchdog.Init.Prescaler = IWDG_PRESCALER_256;
-    watchdog.Init.Reload = 511;
-    watchdog_ready = HAL_IWDG_Init(&watchdog) == HAL_OK;
+    watchdog_start();
 
     for (;;) {
         uint32_t now = HAL_GetTick();

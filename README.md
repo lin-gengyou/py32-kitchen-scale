@@ -73,7 +73,7 @@ pio run -e scale_basic
 | 目标 | Flash | RAM（含链接器预留堆栈） |
 |---|---:|---:|
 | 点灯 | 1660 B / 16384 B | 1008 B / 3072 B |
-| 称重 | 14632 B / 16384 B | 2104 B / 3072 B |
+| 称重 | 14648 B / 16384 B | 2104 B / 3072 B |
 
 ## 3. 连接烧录器和秤板
 
@@ -109,6 +109,8 @@ pio run -e scale_basic -t upload
 Upload会先运行芯片包准备脚本，自动下载或复用通过校验的DFP。已有ELF时，可以执行`pio run -e scale_py32f002a -t nobuild -t upload`直接下载；HEX/BIN会按ELF的依赖关系更新。
 
 J-Link同时设置`jlink.non_interactive=false`，允许SDK显示对话框，跳过pyOCD 0.36在打开设备前关闭弹窗的调用。这用于规避J-Link DLL 9.14及以上版本的已知打开顺序问题，详见[上游修复说明](https://github.com/pyocd/pyOCD/pull/1927)。
+
+固件开启DBGMCU时钟后设置IWDG调试冻结。项目的`pyocd.yaml`同步设置芯片包的冻结变量，内核暂停时看门狗停止计数，正常运行时继续提供复位保护。
 
 正常上传保留最后 4KB 配置扇区。整片擦除后，重新执行第 6 节标定。
 

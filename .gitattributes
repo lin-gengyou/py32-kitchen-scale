@@ -7,3 +7,5 @@
 # Intel HEX emitted by objcopy uses CRLF; retain the exact checksummed bytes.
 *.hex whitespace=cr-at-eol
 *.bin binary
+*.c whitespace=cr-at-eol
+*.h whitespace=cr-at-eol

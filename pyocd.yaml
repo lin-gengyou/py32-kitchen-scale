@@ -1,0 +1,4 @@
+# DFP 的 DebugCoreStart 会开启 DBGMCU 时钟，并把此变量写入 APBFZ1。
+# 设置 bit12，让已有固件的 IWDG 在调试暂停时冻结；核心运行时仍正常计数。
+pack.debug_sequences.debugvars: |
+  DbgMCU_APB_Fz1 = 0x00001000;
