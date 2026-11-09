@@ -66,6 +66,8 @@ pio run -e scale_basic
 
 在 VS Code 左侧 PlatformIO 图标 → **Project Tasks** 中，也可以分别展开两个环境，点击 **Build**。输出末尾出现 `SUCCESS` 表示该目标构建完成。固件生成在 `.pio/build/<环境名>/firmware.elf`。
 
+同一目录还会生成`firmware.hex`和`firmware.bin`，供其他烧录软件加载。HEX包含写入地址；加载BIN时起始地址填写`0x08000000`。仓库`firmware/v1.0.2/`提供点灯和称重两个目标的三种格式及SHA-256清单。
+
 当前两个目标的构建记录：
 
 | 目标 | Flash | RAM（含链接器预留堆栈） |
@@ -103,6 +105,8 @@ pio run -e scale_basic -t upload
 ```
 
 上传使用pyOCD、目标`py32f002ax5`、默认**100kHz SWD**、扇区擦除和软件复位，并输出详细连接日志。速度由`platformio.ini`的`custom_swd_frequency`设置。外部供电时配置`jlink.power=false`，上传过程保持J-Link目标供电请求关闭。CMSIS-DAP与J-Link上传使用USB调试接口，串口COM号用于UART调试。
+
+Upload会先运行芯片包准备脚本，自动下载或复用通过校验的DFP。已有ELF时，可以执行`pio run -e scale_py32f002a -t nobuild -t upload`直接下载；HEX/BIN会按ELF的依赖关系更新。
 
 J-Link同时设置`jlink.non_interactive=false`，允许SDK显示对话框，跳过pyOCD 0.36在打开设备前关闭弹窗的调用。这用于规避J-Link DLL 9.14及以上版本的已知打开顺序问题，详见[上游修复说明](https://github.com/pyocd/pyOCD/pull/1927)。
 

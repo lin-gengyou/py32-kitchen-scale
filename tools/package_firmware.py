@@ -1,4 +1,4 @@
-"""把两个已构建的 ELF 与来源 SHA-256 清单打包到 firmware/<版本>。"""
+"""把两个目标的 ELF/HEX/BIN 与来源 SHA-256 清单打包到 firmware/<版本>。"""
 import argparse
 import hashlib
 import json
@@ -14,8 +14,10 @@ def main():
     if not re.fullmatch(r"v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*", args.version):
         parser.error("版本示例：v1.0.2")
     root = Path(__file__).resolve().parents[1]
-    pairs = {"blink.elf": "scale_py32f002a", "scale_basic.elf": "scale_basic"}
-    source = {name: root / ".pio/build" / env / "firmware.elf" for name, env in pairs.items()}
+    pairs = {"blink": "scale_py32f002a", "scale_basic": "scale_basic"}
+    source = {name + "." + extension:
+              root / ".pio/build" / env / ("firmware." + extension)
+              for name, env in pairs.items() for extension in ("elf", "hex", "bin")}
     for path in source.values():
         if not path.is_file():
             parser.error("先构建两个目标：pio run -e scale_py32f002a -e scale_basic")

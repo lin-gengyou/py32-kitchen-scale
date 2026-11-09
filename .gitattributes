@@ -4,3 +4,6 @@
 *.docx binary
 *.png binary
 *.elf binary
+# Intel HEX emitted by objcopy uses CRLF; retain the exact checksummed bytes.
+*.hex whitespace=cr-at-eol
+*.bin binary

@@ -63,6 +63,8 @@ pio run -v -e scale_py32f002a -t upload 2>&1 | Tee-Object upload.log
 
 两个脚本同时设置`jlink.power=false`，跳过`SupplyPower = 1`命令。旧上传脚本没有覆盖pyOCD的供电默认值；不支持软件供电控制的下载器可能在此处抛出J-Link异常，随后被转换为`Memory transfer fault`。
 
+Upload入口会自动准备并校验DFP。正常构建生成ELF、HEX和BIN；`nobuild`入口按现有ELF生成HEX后下载。HEX中包含地址，BIN在其他烧录软件中的起始地址为`0x08000000`。
+
 ## 4. 按日志定位
 
 | 现象 | 下一步 |

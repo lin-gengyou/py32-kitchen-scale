@@ -9,6 +9,14 @@ framework = Path(env.PioPlatform().get_package_dir("framework-py32f0sdk"))
 env.Append(CPPPATH=[str(framework / "CMSIS" / "Device" / "PY32F0xx" / "Source")])
 uploader = Path(env.PioPlatform().get_package_dir("tool-pyocd")) / "pyocd.py"
 pack = project / "packs" / "Puya.PY32F0xx_DFP.1.2.20.pack"
+# 所有 Upload 入口先准备同一份校验过的 DFP，避免首次下载依赖手动运行脚本。
+env.AddPreAction(
+    "upload",
+    env.VerboseAction(
+        '"$PYTHONEXE" "{}"'.format(project / "tools" / "setup_pack.py"),
+        "Preparing Puya device pack",
+    ),
+)
 # 杜邦线首次联调使用 100kHz，可在 platformio.ini 中调整。
 frequency = int(env.GetProjectOption("custom_swd_frequency", "100000"))
 if frequency <= 0:
