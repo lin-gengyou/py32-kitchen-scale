@@ -7,7 +7,7 @@
     "include/scale_config.h": "e2606eaeb28f10f4ff39322a7538abcab5ca66267e60f6c22ef62541cbd385b8",
     "include/weight_state.h": "d49d46442fe9fed2513042d8dce78a2f31efc661317435ad1051d5e25ed1e6e5",
     "ldscripts/scale_py32f002a.ld": "cabdab17e2b906eca7d9633fd5d9dcd19cd1909c824aee3b5900427b285e692b",
-    "platformio.ini": "3117670cd30d9232bacd6816001c69866c8d435fedcc21bf55803de2e95180b1",
+    "platformio.ini": "2161ad02dd1ee0fc669bcbda601a5ade356ff060f24b9323d8b0d326cf7dda9e",
     "pyocd.yaml": "1cc001e4508f1cbaf4aa48e664d52eff4141903db4dac01e8d357c0ad154b1fc",
     "src/interrupts.c": "a1e50cd591bcf6a677e884f92e09860c478b61be35f768cce750adeea5a85747",
     "src/main.c": "08a7890638a42d4f828728e62934eefb20821b3d9cdfe1fa53406ce91018155f",
@@ -17,9 +17,9 @@
     "tools/package_firmware.py": "0f4b547de0d0b28832974f69d4850cf4df556ed804b51775843036a1d224589a",
     "tools/pio_artifacts.py": "a7ccd60ba5a51c487ee0206b6790a8603e45af26465215a4853403ac453d8152",
     "tools/pio_size.py": "54b1a1b00119d91796430cff1b3e15d7cf42b2a7838535d5ffac204cc786d501",
-    "tools/pio_upload.py": "034e699679f42cfb48bba4ccd71018a3b7abbf992b4a074a8d459d39d38d7e53",
+    "tools/pio_upload.py": "062d36dcd9fc2f2d1adf28179f5d7b0cf884887f43659efb74c998324c2dbd8f",
     "tools/run_host_checks.py": "8b4e3297c6cc84fec141e53e92b182f3b912b631ebdd7199b5c4478c7142db66",
     "tools/setup_pack.py": "7aa7c6392bde11a8f29d9829dc9d5266b62976de80588ec5ea8ef9058631c1fc",
-    "tools/swd_diagnose.py": "4022a72b1ea3209728cc418c2f25c6ae8273fcddd8af6cfed04a19deec69e658"
+    "tools/swd_diagnose.py": "862fae223b67df79a7e0d8cff399193f6c9133ae85875afb238062fdb29a4641"
   }
 }

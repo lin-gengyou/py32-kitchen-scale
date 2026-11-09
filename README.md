@@ -56,15 +56,17 @@ $pioPython = "$env:USERPROFILE/.platformio/penv/Scripts/python.exe"
 
 | PlatformIO 环境 | 用途 | 成功后的行为 |
 |---|---|---|
-| `scale_py32f002a` | 首次点灯、检查下载链路；也是默认环境 | LED2 每 500ms 翻转一次，完整亮灭周期约 1 秒 |
-| `scale_basic` | 完整称重与控制固件 | HX711 采样、标定、去皮归零、蓝牙协议、蜂鸣、待机和参数保存 |
+| `scale_py32f002a` | PWLINK2 Lite 首次点灯；也是默认环境 | LED2 每 500ms 翻转一次，完整亮灭周期约 1 秒 |
+| `scale_basic` | PWLINK2 Lite 称重与控制固件 | HX711 采样、标定、去皮归零、蓝牙协议、蜂鸣、待机和参数保存 |
+| `scale_py32f002a_jlink` | 队友 ARM V9 / J-Link 首次点灯 | 与点灯目标使用相同源码，上传时选择 J-Link |
+| `scale_basic_jlink` | 队友 ARM V9 / J-Link 称重与控制固件 | 与称重目标使用相同源码，上传时选择 J-Link |
 
 ```powershell
 pio run -e scale_py32f002a
 pio run -e scale_basic
 ```
 
-在 VS Code 左侧 PlatformIO 图标 → **Project Tasks** 中，也可以分别展开两个环境，点击 **Build**。输出末尾出现 `SUCCESS` 表示该目标构建完成。固件生成在 `.pio/build/<环境名>/firmware.elf`。
+在 VS Code 左侧 PlatformIO 图标 → **Project Tasks** 中，展开所需环境，点击 **Build**。两个基础环境使用 PWLINK2 Lite；带 `_jlink` 后缀的两个环境供队友使用。输出末尾出现 `SUCCESS` 表示该目标构建完成。固件生成在 `.pio/build/<环境名>/firmware.elf`。
 
 同一目录还会生成`firmware.hex`和`firmware.bin`，供其他烧录软件加载。HEX包含写入地址；加载BIN时起始地址填写`0x08000000`。仓库`firmware/v1.0.2/`提供点灯和称重两个目标的三种格式及SHA-256清单。
 
@@ -79,7 +81,7 @@ pio run -e scale_basic
 
 使用 **支持 5V 目标 SWD 电平的烧录器**。pyOCD统一对接CMSIS-DAP和安装驱动后的J-Link；PWLINK2 Lite使用目标电压参考模式。秤板由自身电源供电，烧录器使用USB连接电脑。
 
-PWLINK2 Lite 在 PowerWriter 客户端中先选择 **接口电平 → 外部输入 → 应用 → 保存全局上电设置**。完成设置后断电接四线，再给秤板供电。烧录器的专用 5V 供电输出脚在此连接方式中保持空置。
+从 [PowerWriter 官网](https://www.powerwriter.com/index/index/products.html?c=files&p=&t=Client) 下载 **Power Writer - For ARM** 客户端，适用于 PWLINK2 Lite。先选择 **接口电平 → 外部输入 → 应用 → 保存全局上电设置**。完成设置后断电接四线，再给秤板供电。烧录器的专用 5V 供电输出脚在此连接方式中保持空置。
 
 H4 的 VCC5V 给烧录器提供目标电压参考。主控以 5V 工作时，输入高电平保证值为 `0.7 × VCC = 3.5V`；烧录器的 SWD 信号使用对应的目标电平。[主控数据手册第 42 页](https://www.puyasemi.com/download_path/数据手册/MCU%20微处理器/PY32F002A系列数据手册_V1.1.pdf#page=42)
 
@@ -104,11 +106,18 @@ pio run -e scale_py32f002a -t upload
 pio run -e scale_basic -t upload
 ```
 
-上传使用pyOCD、目标`py32f002ax5`、默认**100kHz SWD**、扇区擦除和软件复位，并输出详细连接日志。速度由`platformio.ini`的`custom_swd_frequency`设置。外部供电时配置`jlink.power=false`，上传过程保持J-Link目标供电请求关闭。CMSIS-DAP与J-Link上传使用USB调试接口，串口COM号用于UART调试。
+默认上传使用 **PWLINK2 Lite 的 CMSIS-DAP 接口**（`--uid cmsisdap:`）。pyOCD 的芯片目标为 `py32f002ax5`，采用 **100kHz SWD**、扇区擦除和软件复位，并输出详细连接日志。速度由 `platformio.ini` 的 `custom_swd_frequency` 设置，下载器类型由 `custom_probe_type` 设置。CMSIS-DAP 与 J-Link 上传使用 USB 调试接口，串口 COM 号用于 UART 调试。
+
+队友使用 ARM V9 / J-Link 时，选择带 `_jlink` 后缀的环境即可。两个入口明确选择 `--uid jlink:`，并保留原来的外部供电和 J-Link SDK 兼容参数：
+
+```powershell
+pio run -e scale_py32f002a_jlink -t upload
+pio run -e scale_basic_jlink -t upload
+```
 
 Upload会先运行芯片包准备脚本，自动下载或复用通过校验的DFP。已有ELF时，可以执行`pio run -e scale_py32f002a -t nobuild -t upload`直接下载；HEX/BIN会按ELF的依赖关系更新。
 
-J-Link同时设置`jlink.non_interactive=false`，允许SDK显示对话框，跳过pyOCD 0.36在打开设备前关闭弹窗的调用。这用于规避J-Link DLL 9.14及以上版本的已知打开顺序问题，详见[上游修复说明](https://github.com/pyocd/pyOCD/pull/1927)。
+J-Link 环境设置 `jlink.power=false`，关闭目标供电请求；同时设置 `jlink.non_interactive=false`，允许 SDK 显示对话框，跳过 pyOCD 0.36 在打开设备前关闭弹窗的调用。这用于规避 J-Link DLL 9.14 及以上版本的已知打开顺序问题，详见[上游修复说明](https://github.com/pyocd/pyOCD/pull/1927)。
 
 固件开启DBGMCU时钟后设置IWDG调试冻结。项目的`pyocd.yaml`同步设置芯片包的冻结变量，内核暂停时看门狗停止计数，正常运行时继续提供复位保护。
 
@@ -117,10 +126,10 @@ J-Link同时设置`jlink.non_interactive=false`，允许SDK显示对话框，跳
 连接诊断在PlatformIO终端运行：
 
 ```powershell
-python tools/swd_diagnose.py --uid jlink:
+python tools/swd_diagnose.py
 ```
 
-CMSIS-DAP可运行`python tools/swd_diagnose.py`。脚本先列出下载器，再以100kHz连接并读取CPUID、RAM和Flash开头，将详细结果写入`logs/swd-*.log`。诊断会暂停内核，结束后按SW1复位恢复运行。上传时的日志可保存为：
+诊断默认选择 PWLINK2 Lite 的 CMSIS-DAP；队友使用 `python tools/swd_diagnose.py --uid jlink:`。脚本先列出下载器，再以 100kHz 连接并读取 CPUID、RAM 和 Flash 开头，将详细结果写入 `logs/swd-*.log`。诊断会暂停内核，结束后按 SW1 复位恢复运行。上传时的日志可保存为：
 
 ```powershell
 pio run -v -e scale_py32f002a -t upload 2>&1 | Tee-Object upload.log

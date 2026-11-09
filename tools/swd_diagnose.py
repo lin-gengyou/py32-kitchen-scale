@@ -57,7 +57,8 @@ def all_reads_present(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="只列出USB烧录器")
-    parser.add_argument("--uid", help="可填 jlink: 限定J-Link，或指定烧录器序号")
+    parser.add_argument("--uid", default="cmsisdap:",
+                        help="默认 cmsisdap: 用于 PWLINK2 Lite；jlink: 用于队友 J-Link；也可指定序号")
     parser.add_argument("--frequency", type=int, default=100000, help="SWD Hz，默认100000")
     parser.add_argument("--python", help="指定PlatformIO的Python解释器")
     parser.add_argument("--dry-run", action="store_true", help="打印命令，保持设备状态")
@@ -68,8 +69,10 @@ def main():
     inventory = [python, entry, "list", "--probes", "--color", "never"]
     connection = [python, entry, "commander", "--target", "py32f002ax5", "--pack", str(PACK),
                   "--frequency", str(args.frequency), "--connect", "halt", "--no-wait", "-vv",
-                  "--color", "never", "-O", "reset_type=sysresetreq", "-O", "auto_unlock=false",
-                  "-O", "jlink.power=false", "-O", "jlink.non_interactive=false"]
+                  "--color", "never", "-O", "reset_type=sysresetreq", "-O", "auto_unlock=false"]
+    # 未限制类型的实际序号仍可能属于 J-Link，保留相应 SDK 兼容设置。
+    if not args.uid.lower().startswith("cmsisdap:"):
+        connection += ["-O", "jlink.power=false", "-O", "jlink.non_interactive=false"]
     if args.uid:
         connection += ["--uid", args.uid]
     for command in ("show probe-uid", "show target", "read32 0xe000ed00 4",

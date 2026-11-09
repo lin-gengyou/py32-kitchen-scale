@@ -22,7 +22,7 @@
 
 ```powershell
 git pull --ff-only
-pio run -e scale_py32f002a
+pio run -e scale_py32f002a_jlink
 python tools/setup_pack.py
 ```
 
@@ -52,10 +52,12 @@ CMSIS-DAP使用`python tools/swd_diagnose.py`。有多个下载器时，在`--ui
 完成硬件核对后上传点灯版：
 
 ```powershell
-pio run -v -e scale_py32f002a -t upload 2>&1 | Tee-Object upload.log
+pio run -v -e scale_py32f002a_jlink -t upload 2>&1 | Tee-Object upload.log
 ```
 
-当前参数：100kHz SWD、`connect_mode=halt`、`reset_type=sysresetreq`、`auto_unlock=false`、`jlink.power=false`、`jlink.non_interactive=false`。要降低到50kHz，在`platformio.ini`中设置`custom_swd_frequency = 50000`；连接正常后可提高速度。
+队友的完整称重固件使用 `pio run -e scale_basic_jlink -t upload`。在 VS Code 的 Project Tasks 中展开相应 `_jlink` 环境，也可以直接点击 Upload。
+
+当前参数：`--uid jlink:`、100kHz SWD、`connect_mode=halt`、`reset_type=sysresetreq`、`auto_unlock=false`、`jlink.power=false`、`jlink.non_interactive=false`。要降低到50kHz，在`platformio.ini`中设置`custom_swd_frequency = 50000`；连接正常后可提高速度。
 
 ### J-Link 软件兼容设置
 

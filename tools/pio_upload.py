@@ -1,4 +1,4 @@
-"""适配 SDK 系统文件，并配置外部供电、低速 SWD 的 pyOCD 上传命令。"""
+"""适配 SDK，并按 PIO 环境选择 PWLINK2 Lite 或队友 J-Link 的上传接口。"""
 from pathlib import Path
 
 Import("env")
@@ -21,15 +21,19 @@ env.AddPreAction(
 frequency = int(env.GetProjectOption("custom_swd_frequency", "100000"))
 if frequency <= 0:
     raise ValueError("custom_swd_frequency 必须为正整数，单位 Hz")
-# 秤板独立供电：禁止 J-Link 后端主动请求开启目标供电。
-# 此选项不控制 ARM V9 的内部 Vtref/VOUT 物理短接开关。
-# pyOCD 0.36 会在 open() 前调用 disable_dialog_boxes()，与 J-Link DLL 9.14+
-# 存在已知兼容问题。允许 SDK 弹窗以跳过这次提前调用；见上游 PR #1927。
-env.Replace(
-    UPLOADCMD='"$PYTHONEXE" "{}" load -vv --target py32f002ax5 '
+probe_type = env.GetProjectOption("custom_probe_type", "cmsisdap").strip().lower()
+if probe_type not in ("cmsisdap", "jlink"):
+    raise ValueError("custom_probe_type 请选择 cmsisdap 或 jlink")
+# --uid 的类型前缀只枚举指定接口；芯片目标始终为 py32f002ax5。
+command = (
+    '"$PYTHONEXE" "{}" load -vv --target py32f002ax5 --uid {}: '
     '--pack "{}" --erase sector --frequency {} -O connect_mode=halt '
-    '-O reset_type=sysresetreq -O auto_unlock=false -O jlink.power=false '
-    '-O jlink.non_interactive=false "$SOURCE"'.format(
-        uploader, pack, frequency
+    '-O reset_type=sysresetreq -O auto_unlock=false'.format(
+        uploader, probe_type, pack, frequency
     )
 )
+if probe_type == "jlink":
+    # 秤板独立供电：关闭 J-Link 的目标供电请求；ARM V9 内部短接另按硬件说明设置。
+    # 跳过 pyOCD 0.36 在 open() 前关闭弹窗的调用，适配 J-Link DLL 9.14+；见 PR #1927。
+    command += ' -O jlink.power=false -O jlink.non_interactive=false'
+env.Replace(UPLOADCMD=command + ' "$SOURCE"')
