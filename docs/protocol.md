@@ -1,4 +1,6 @@
-# 蓝牙与串口协议 · 版本 2
+# 历史文档：v1.0.2 蓝牙与串口协议 · 版本 2
+
+**本文对应v1.0.2。v1.1.0使用板上SW4与段码LCD，未启用串口/BLE命令。当前操作见[按键指南](button-guide.md)。**
 
 固件入口为 `src/scale_basic.c`，版本 `1.0.2`。MCU 与 ECB01C 通过 USART1 连接，PA2=TX、PA3=RX、9600bps、8N1。BLE 使用 FFF1 Notify 上报、FFF2 Write 下发；首次连接时通过服务发现核对实际特征。
 

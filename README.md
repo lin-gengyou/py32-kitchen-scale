@@ -1,28 +1,42 @@
 # 5kg 厨房电子秤 · PY32F002A
 
-基于 **PY32F002AF15P6TU + HX711 + ECB01C** 的电子秤固件，使用 **VS Code + PlatformIO + C / 普冉 HAL** 开发。当前固件版本 **1.0.2**，蓝牙应用协议版本 **2**。
+**v1.1.0：板上 SW4 按键操作，HT1621B 段码 LCD 显示。** 称重、去皮、归零、单位、标定和设置均在秤板完成。串口和蓝牙未启用，彩屏片选保持空闲。
 
-本仓库包含项目源码、自定义板型、链接脚本、构建与下载脚本、桌面模拟检查、固件文件、原理图和项目文档。编译器、SDK 与芯片包按固定版本安装。
+开发环境为 **VS Code + PlatformIO + C / 普冉 HAL**。仓库包含完整源码、自定义板型、链接脚本、固定版本依赖、烧录脚本、操作说明、原理图和可直接下载的固件。
 
 ![电子秤 PCB 3D 图](docs/images/pcb-3d.png)
 
-## 先看哪份资料
+## 马上操作
 
-| 你要做的事 | 从这里开始 |
+操作键是 **SW4 / PB3**；**SW1 是硬件复位键**。
+
+| 在称重页操作 SW4 | 功能 |
 |---|---|
-| 第一次拿到项目，完成编译、接线、烧录 | 阅读本页第 1～5 节 |
-| 操作实物、标定、查看全部功能 | [PCB 操作与联调指南 PDF · 29 页](docs/manuals/02_厨房电子秤PCB操作与联调指南_1.0.2.pdf) |
-| 对照源码理解每部分逻辑 | [功能逻辑与代码图解 PDF · 43 页](docs/manuals/01_厨房电子秤功能逻辑与代码图解_1.0.2.pdf) |
-| 写手机或 RK3566 平板端程序 | [蓝牙与串口协议](docs/protocol.md) |
-| 查针脚、电源、屏幕与传感器连接 | [硬件连接说明](docs/hardware.md) |
-| 分工、修改代码、提交给队友 | [团队协作流程](docs/team-workflow.md) |
-| 看当前需求与功能进度 | [需求对照](REQUIREMENTS.md) |
+| 短按一次 | 稳定后去皮 |
+| 连按两次 | g / kg 切换并保存 |
+| 按住 1.5～不足 3 秒，再松开 | 空秤归零，同时清除皮重 |
+| 按住至少 3 秒，再松开 | 进入 `SEt` 设置菜单 |
+| 待机时按一下 | 唤醒；这次按键只唤醒 |
 
-## 1. 下载项目并准备开发环境
+**菜单里：短按下一项，按住 1.5～不足 3 秒松开进入/确认，双击返回。** 数字编辑时短按改当前闪烁位，双击移位，长按确认；按住 3 秒松开取消。
 
-Windows 上安装 [Git](https://git-scm.com/downloads) 和 [VS Code](https://code.visualstudio.com/)。在 VS Code 扩展面板安装 **PlatformIO IDE** 与 **C/C++**。
+全部菜单、屏幕缩写、逐位改数字和三点标定步骤见 **[v1.1.0 完整按键操作指南](docs/button-guide.md)**。
 
-### 方式 A：用 Git 下载，方便后续更新
+## 功能
+
+- HX711 A 通道、128 倍增益，三点中值滤波、动态 3 点 / 稳定 8 点平均，稳定窗口保持 500ms。
+- 最大称量 5000g，5000g 以上显示 `rAnGE`，达到 5250g 显示 `OL`；去皮后仍按总负载判断。
+- 0.1g / 0.5g / 1g 分段分度，保留负净重和真实 0.5g 小负载。
+- 稳定去皮、空秤归零、清除皮重、g/kg 切换。
+- 板上完成 1～3 点标定；默认三点 500g、2500g、5000g，各点质量可编辑。最后一点成功后整体保存，中途取消保留原标定。
+- 板上设置静音/有源/无源蜂鸣器、待机秒数、判稳阈值、刷新周期、设备编号、标定日期。
+- 板上查看 HX711 原始计数、固件版本、设备信息与标定点数，执行屏幕全亮/数字/空白自检。
+- 默认空秤稳定、无皮重且无操作 120 秒后软件待机，关闭 LCD 和 HX711；SW4 唤醒。
+- 双页 CRC32 参数保存，兼容 v1.0.2 标定记录，约 4 秒独立看门狗。
+
+## 1. 下载与构建
+
+安装 [VS Code](https://code.visualstudio.com/)、[Git](https://git-scm.com/downloads) 和 VS Code 扩展 **PlatformIO IDE**、**C/C++**。
 
 ```powershell
 git clone https://github.com/lin-gengyou/py32-kitchen-scale.git
@@ -30,255 +44,108 @@ cd py32-kitchen-scale
 code .
 ```
 
-### 方式 B：下载 ZIP
-
-在仓库页面选择 **Code → Download ZIP**，解压后在 VS Code 中打开含有 `platformio.ini` 的文件夹。
-
-首次打开后等待 PlatformIO 初始化。终端通过 **PlatformIO: New Terminal** 或 **PlatformIO Core CLI** 打开。以下 `pio` 和 `python` 命令均在该终端、项目根目录执行。
+在 VS Code 执行 **PlatformIO: New Terminal**，运行：
 
 ```powershell
-pio --version
 python tools/setup_pack.py
+pio run
 ```
 
-第二条命令下载普冉 DFP **1.2.20**，核对 SHA-256，保存为 `packs/Puya.PY32F0xx_DFP.1.2.20.pack`。已有正确版本时直接复用。工程使用 PlatformIO Core **6.1.19** 验证；平台、HAL 和 ARM GCC 的固定版本见 `platformio.ini`。
+默认目标为完整按键固件 `scale_basic`。平台、HAL、GCC 和 DFP 固定版本见 `platformio.ini` 与 [依赖说明](docs/third-party.md)。
 
-Windows 普通 PowerShell 也可直接调用 PlatformIO 自带程序：
+Windows 普通 PowerShell 可直接调用 PlatformIO 自带程序：
 
 ```powershell
 $pio = "$env:USERPROFILE/.platformio/penv/Scripts/pio.exe"
-$pioPython = "$env:USERPROFILE/.platformio/penv/Scripts/python.exe"
-& $pioPython tools/setup_pack.py
 & $pio run -e scale_basic
+& $pio run -e scale_basic -t upload
 ```
 
-## 2. 选择编译目标
-
-| PlatformIO 环境 | 用途 | 成功后的行为 |
+| 环境 | 用途 | 烧录器接口 |
 |---|---|---|
-| `scale_py32f002a` | PWLINK2 Lite 首次点灯；也是默认环境 | LED2 每 500ms 翻转一次，完整亮灭周期约 1 秒 |
-| `scale_basic` | PWLINK2 Lite 称重与控制固件 | HX711 采样、标定、去皮归零、蓝牙协议、蜂鸣、待机和参数保存 |
-| `scale_py32f002a_jlink` | 队友 ARM V9 / J-Link 首次点灯 | 与点灯目标使用相同源码，上传时选择 J-Link |
-| `scale_basic_jlink` | 队友 ARM V9 / J-Link 称重与控制固件 | 与称重目标使用相同源码，上传时选择 J-Link |
+| `scale_basic`，默认 | 完整按键 + LCD 称重固件 | PWLINK2 Lite / CMSIS-DAP |
+| `scale_basic_jlink` | 同一份完整固件 | ARM V9 / J-Link |
+| `scale_py32f002a` | 独立点灯诊断，LED2 每 500ms 翻转 | CMSIS-DAP |
+| `scale_py32f002a_jlink` | 同一份点灯诊断 | J-Link |
 
-```powershell
-pio run -e scale_py32f002a
-pio run -e scale_basic
-```
+也可在 PlatformIO → Project Tasks → 对应环境点击 **Build / Upload**。完整固件文件生成在 `.pio/build/scale_basic/`，同目录提供 ELF、HEX、BIN。
 
-在 VS Code 左侧 PlatformIO 图标 → **Project Tasks** 中，展开所需环境，点击 **Build**。两个基础环境使用 PWLINK2 Lite；带 `_jlink` 后缀的两个环境供队友使用。输出末尾出现 `SUCCESS` 表示该目标构建完成。固件生成在 `.pio/build/<环境名>/firmware.elf`。
+本版完整固件约使用 **12.2KB Flash、1.6KB RAM**，程序区域上限 16KB，整片 SRAM 3KB。末尾 4KB Flash 为配置区。
 
-同一目录还会生成`firmware.hex`和`firmware.bin`，供其他烧录软件加载。HEX包含写入地址；加载BIN时起始地址填写`0x08000000`。仓库`firmware/v1.0.2/`提供点灯和称重两个目标的三种格式及SHA-256清单。
+## 2. 接线与烧录
 
-当前两个目标的构建记录：
+秤板使用自身电源，SWD 接口电平匹配主控 5V。PWLINK2 Lite 在 [PowerWriter 客户端](https://www.powerwriter.com/index/index/products.html?c=files&p=&t=Client) 选择 **接口电平 → 外部输入 → 应用 → 保存全局上电设置**，再断电接线。
 
-| 目标 | Flash | RAM（含链接器预留堆栈） |
-|---|---:|---:|
-| 点灯 | 1660 B / 16384 B | 1008 B / 3072 B |
-| 称重 | 14648 B / 16384 B | 2104 B / 3072 B |
+从屏幕端向板外侧数 H4：
 
-## 3. 连接烧录器和秤板
+| 位置 | 主板信号 | 烧录器信号 |
+|---|---|---|
+| 第 1 根，H4-4 | VCC5V | VREF / TVCC 参考输入 |
+| 第 2 根，H4-3 | PA14 | SWCLK |
+| 第 3 根，H4-2 | PA13 | SWDIO |
+| 第 4 根，H4-1 | GND | GND |
 
-使用 **支持 5V 目标 SWD 电平的烧录器**。pyOCD统一对接CMSIS-DAP和安装驱动后的J-Link；PWLINK2 Lite使用目标电压参考模式。秤板由自身电源供电，烧录器使用USB连接电脑。
+烧录器独立电源输出脚空置。ARM V9 的 Vtref/VOUT 内部短接处理和连接步骤见 [烧录说明](docs/upload-troubleshooting.md)，完整接口见 [硬件说明](docs/hardware.md)。
 
-从 [PowerWriter 官网](https://www.powerwriter.com/index/index/products.html?c=files&p=&t=Client) 下载 **Power Writer - For ARM** 客户端，适用于 PWLINK2 Lite。先选择 **接口电平 → 外部输入 → 应用 → 保存全局上电设置**。完成设置后断电接四线，再给秤板供电。烧录器的专用 5V 供电输出脚在此连接方式中保持空置。
-
-H4 的 VCC5V 给烧录器提供目标电压参考。主控以 5V 工作时，输入高电平保证值为 `0.7 × VCC = 3.5V`；烧录器的 SWD 信号使用对应的目标电平。[主控数据手册第 42 页](https://www.puyasemi.com/download_path/数据手册/MCU%20微处理器/PY32F002A系列数据手册_V1.1.pdf#page=42)
-
-更详细的针脚、H1 传感器接口和 FPC 定义见 [硬件连接说明](docs/hardware.md)。
-
-**ARM V9 / J-Link类下载器**：这款外壳贴纸标注VOUT=3.3V，Vtref与VOUT出厂默认内部短接。先断电，按厂家说明断开这个内部短接，再把秤板5V接Vtref参考输入；VOUT和19脚5V输出保持空置。分步接线、测量与诊断见 [ARM V9 首次连接](docs/upload-troubleshooting.md)。
-
-## 4. 烧录与首次点灯
-
-1. 完成芯片包下载和 H4 四线连接，给秤板上电。
-2. 关闭占用烧录器的其他下载软件。
-3. 下载点灯目标，查看擦写、校验和复位结果。
-
-```powershell
-pio run -e scale_py32f002a -t upload
-```
-
-4. 观察 LED2 按 500ms 翻转。LED1 对应电源支路。
-5. 下载称重目标。
+PWLINK2 Lite 上传：
 
 ```powershell
 pio run -e scale_basic -t upload
 ```
 
-默认上传使用 **PWLINK2 Lite 的 CMSIS-DAP 接口**（`--uid cmsisdap:`）。pyOCD 的芯片目标为 `py32f002ax5`，采用 **100kHz SWD**、扇区擦除和软件复位，并输出详细连接日志。速度由 `platformio.ini` 的 `custom_swd_frequency` 设置，下载器类型由 `custom_probe_type` 设置。CMSIS-DAP 与 J-Link 上传使用 USB 调试接口，串口 COM 号用于 UART 调试。
-
-队友使用 ARM V9 / J-Link 时，选择带 `_jlink` 后缀的环境即可。两个入口明确选择 `--uid jlink:`，并保留原来的外部供电和 J-Link SDK 兼容参数：
+队友使用 J-Link：
 
 ```powershell
-pio run -e scale_py32f002a_jlink -t upload
 pio run -e scale_basic_jlink -t upload
 ```
 
-Upload会先运行芯片包准备脚本，自动下载或复用通过校验的DFP。已有ELF时，可以执行`pio run -e scale_py32f002a -t nobuild -t upload`直接下载；HEX/BIN会按ELF的依赖关系更新。
+上传使用 Puya DFP、100kHz SWD、扇区擦除，保留配置区。完成后固件复位运行，先显示全段自检 2.5 秒，再显示版本 1.1.0，随后进入称重页。
 
-J-Link 环境设置 `jlink.power=false`，关闭目标供电请求；同时设置 `jlink.non_interactive=false`，允许 SDK 显示对话框，跳过 pyOCD 0.36 在打开设备前关闭弹窗的调用。这用于规避 J-Link DLL 9.14 及以上版本的已知打开顺序问题，详见[上游修复说明](https://github.com/pyocd/pyOCD/pull/1927)。
+## 3. 第一次使用与标定
 
-固件开启DBGMCU时钟后设置IWDG调试冻结。项目的`pyocd.yaml`同步设置芯片包的冻结变量，内核暂停时看门狗停止计数，正常运行时继续提供复位保护。
+1. 接好 H1 的 E+/E−/A+/A−，安装并放平秤台，上电。
+2. 出现 `no CAL` 时，长按 SW4 至少 3 秒后松开，进入 `SEt`。
+3. 短按翻到 `CAL`，按住 1.5～不足 3 秒松开，选择标定点数；默认 3 点。
+4. 长按确认，屏幕提示 `ZERO`。移走秤盘上的物品，等 `S` 稳定标记，再长按确认空秤。
+5. 输入第一点质量，默认 500g；长按确认后放上对应砝码，等待 `S`，再长按采集。
+6. 依次完成默认 2500g 和 5000g。各点使用秤盘上**总质量**，也可逐位输入其他递增质量。
+7. 显示 `SAvEd` 后返回称重页，移去砝码开始使用。蜂鸣器模式通过 `bEEP` 菜单选择并保存。
 
-正常上传保留最后 4KB 配置扇区。整片擦除后，重新执行第 6 节标定。
+逐步图例式文字说明见 [按键指南](docs/button-guide.md)。
 
-连接诊断在PlatformIO终端运行：
+## 4. 更新与下载现成固件
 
 ```powershell
-python tools/swd_diagnose.py
+git pull --ff-only
+pio run -e scale_basic -t upload
 ```
 
-诊断默认选择 PWLINK2 Lite 的 CMSIS-DAP；队友使用 `python tools/swd_diagnose.py --uid jlink:`。脚本先列出下载器，再以 100kHz 连接并读取 CPUID、RAM 和 Flash 开头，将详细结果写入 `logs/swd-*.log`。诊断会暂停内核，结束后按 SW1 复位恢复运行。上传时的日志可保存为：
+现成文件位于 **[firmware/v1.1.0](firmware/v1.1.0)**：
 
-```powershell
-pio run -v -e scale_py32f002a -t upload 2>&1 | Tee-Object upload.log
-```
+- `scale_basic.hex` / `.elf`：包含写入地址。
+- `scale_basic.bin`：写入起始地址 `0x08000000`。
+- `blink.*`：点灯诊断。
+- `SHA256SUMS`：固件哈希；`manifest.json`：对应源码哈希。
 
-## 5. 接入称重传感器并查看数据
+v1.0.2 文件保留为历史版本，其串口操作说明和两份旧 PDF 对应旧版。当前操作以本页及 v1.1.0 按键指南为准。
 
-程序使用 HX711 **A 通道、128 倍增益**。四线全桥传感器按厂家给定的 E+、E−、A+、A− 接到 H1：
+## 5. 代码从哪里读
 
-| H1 针号 | 连接 |
+| 文件 | 内容 |
 |---|---|
-| 3 | A+ 信号正端 |
-| 4 | A− 信号负端 |
-| 5 | E+ 激励正端 |
-| 6 | E− 激励负端 |
-| 1、2 | B+、B−，本版使用 A 通道 |
-
-传感器固定端、受力端及秤盘按单点梁安装资料装配。安装后把秤放在水平硬质台面。
-
-用手机 BLE 调试工具或 RK3566 应用扫描并连接 ECB01C，发现服务后订阅 **FFF1 Notify**，向 **FFF2 Write** 发送 ASCII 文本，行尾选择 **CRLF**。主控和 ECB01C 之间的 UART 配置为 **9600bps、8N1**。
-
-先逐条发送以下命令，每条收到完整应答后再发送下一条：
-
-```text
-STREAM 0
-INFO
-STATUS
-RAW
-```
-
-- `INFO`：检查 `FW=1.0.2`、`PROTO=2` 和设备信息。
-- `STATUS`：查看 `READY`、`STABLE`、`CAL_POINTS` 等字段。
-- `RAW`：查看 ADC 原始计数，加载时计数随受力变化。
-- `STREAM 0`：暂停周期上报，方便观察命令应答。
-
-## 6. 完成空秤确认和三点标定
-
-以下砝码数值都指 **秤台上总质量**。先保持空秤，查询 `STATUS`，等到 `READY=1`、`STABLE=1`。
-
-| 步骤 | 实物操作 | 命令 | 成功应答 |
-|---|---|---|---|
-| 1 | 初次标定或更换传感器 | `CALRESET` | `OK,CALRESET` |
-| 2 | 空秤，重新等待稳定 | `ZERO` | `OK,ZERO` |
-| 3 | 加载总质量 500g，等待稳定 | `CAL 500` | `OK,CAL,SAVED` |
-| 4 | 调整为总质量 2500g，等待稳定 | `CAL 2500` | `OK,CAL,SAVED` |
-| 5 | 调整为总质量 5000g，等待稳定 | `CAL 5000` | `OK,CAL,SAVED` |
-| 6 | 移走砝码 | `STATUS`、`READ` | `CAL_POINTS=3`，查看空秤读数 |
-| 7 | 录入实际设备编号和日期 | `DEVICE SCALE-001`、`CALDATE 20261105` | `OK,DEVICE`、`OK,CALDATE` |
-| 8 | 恢复周期数据 | `STREAM 1` | `OK,STREAM` |
-
-设备编号和日期按实际标定记录填写。每个点成功后自动保存。重新录入相同或更小质量点时，从该点开始补录后续点。
-
-标定后使用低段、中段和高段砝码检查上升、下降、重复性与偏载。测试项目和记录内容见 [需求对照](REQUIREMENTS.md) 与操作指南第 27 页。
-
-## 7. 日常操作与完整功能
-
-| 操作 | 使用方式 | 结果 |
-|---|---|---|
-| 称重 | 放入物体，读取 FFF1 的 `W` 帧 | 输出净重、稳定标志、皮重和状态 |
-| 去皮 | 放容器，稳定后短按 SW4 并松开；或发送 `TARE,42` | 当前容器作为皮重，净重归零 |
-| 取消去皮 | `UNTARE` | 皮重清零，恢复毛重关系 |
-| 空秤归零 | 移走负载，稳定后长按 SW4 至 1.5s；或 `ZERO` | 更新运行零点并清皮重，保留标定曲线 |
-| 负重量 | 去皮后取走容器 | 保留负净重 |
-| 修改单位 | `UNIT g` / `UNIT kg` | 保存显示单位到统一重量状态；协议重量单位为 g |
-| 修改判稳阈值 | `STABLE 64` | 以 ADC 计数设置 8 点窗口峰峰值阈值，保存后重建窗口 |
-| 提示音 | `BUZZER ACTIVE` / `BUZZER PASSIVE` / `BUZZER OFF` | 保存有源 / 无源约 500Hz / 静音模式 |
-| 修改上报速度 | `RATE 100` / `RATE 200` | 每 100ms / 200ms 上报，分别为 10Hz / 5Hz |
-| 暂停 / 恢复上报 | `STREAM 0` / `STREAM 1` | 控制周期消息，采样与控制任务继续运行 |
-| 自动待机 | `AUTO_OFF 120` | 空秤稳定且无操作 120 秒后软件待机 |
-| 关闭自动待机 | `AUTO_OFF 0` | 保持活动运行 |
-| 唤醒 | 待机时按 SW4 或发送 `WAKE` | 恢复 HX711 采样，先进入 `WAIT` |
-| 主控复位 | 按 SW1 | 恢复 Flash 中的配置，重新采样 |
-
-去皮和归零要求采样新鲜且稳定。已标定时，归零接受空秤基线附近 ±0.1g 的毛重；0.5g 等小负载保留为真实重量。5kg 上限按包含容器的毛重检查。
-
-蜂鸣器新设备配置为 `OFF`，按板上器件类型选择 `ACTIVE` 或 `PASSIVE`。普通控制/设置成功响一声、错误响三声；带序号去皮对同一请求只响一次；持续故障每 2 秒三声提醒。
-
-软件待机时 HX711 掉电、LED2 和蜂鸣器输出关闭，MCU 保留按键与串口任务。唤醒用的这一次按键只唤醒，下一次短按再执行去皮。接收下行命令会重新计算无操作时间，测试自动待机时使用设备主动上报来观察。
-
-## 8. 读懂重量帧，编写队友的上位机
-
-```text
-W,1024,136.4,1,120.0,-1,OK\r\n
-```
-
-这里的 `\r\n` 表示实际 CRLF 行结束字节。
-
-| 字段 | 示例 | 含义 |
-|---|---|---|
-| 类型 | `W` | 重量状态帧 |
-| 消息序号 | `1024` | 每生成一帧递增 |
-| 净重 g | `136.4` | 最后应用分度后的净重 |
-| 稳定 | `1` | 1 稳定，0 动态或无效 |
-| 皮重 g | `120.0` | 当前容器皮重 |
-| 电量百分比 | `-1` | 电量未知，界面显示 `--` |
-| 状态 | `OK` | 正常；其他值见下表 |
-
-该例毛重为 `136.4 + 120.0 = 256.4g`。有效净重的分度为 0.1g / 0.5g / 1g，在 200g、1000g 附近设置切换滞回。
-
-| 状态 | 接收端处理 |
-|---|---|
-| `OK` | 显示正常重量和稳定标志 |
-| `WAIT` | 显示采样准备中 |
-| `UNCAL` | 进入标定流程 |
-| `RANGE` | 显示量程提示，检查毛重与换算范围 |
-| `OL` | 显示超载；毛重 ≥5250g |
-| `ERR` | 显示传感器异常，查看采样链路 |
-| `SLEEP` | 显示待机 |
-
-`RANGE` 包括毛重 >5000g 且 <5250g 的区域。错误帧形如 `W,1025,,0,,-1,OL`，净重和皮重留空。上位机先按状态决定界面，再解析重量字段。
-
-完整命令、应答、参数范围、错误码和重连策略见 [蓝牙与串口协议](docs/protocol.md)。
-
-## 9. 代码结构、验证和协作
-
-```text
-src/                     固件入口、采样称重、配置存储、中断和时钟
-include/                 中文注释的状态、配置和 HAL 头文件
-boards/                  PY32F002A 自定义 PlatformIO 板型
-ldscripts/               16KB 程序区 + 4KB 参数区的链接脚本
-tools/                   芯片包下载、上传、内存统计、模拟检查与固件打包
-tests/host/              可在电脑上运行的 HAL / UART / Flash 模拟检查
-docs/                    协议、硬件、协作说明、两份 PDF 和原始项目文档
-firmware/v1.0.2/         与本版源码对应的点灯和称重 ELF 固件及 SHA-256
-.github/workflows/       两目标构建和桌面模拟检查
-```
-
-在装有 GCC 的电脑上运行桌面检查：
+| `src/scale_basic.c` | HX711、滤波、稳定、换算、去皮归零、待机、报警与主循环 |
+| `src/scale_ui.inc` | SW4 消抖、短按/双击/长按、菜单、数字编辑、标定向导与页面 |
+| `src/lcd_ht1621.c` | HT1621B 时序、PCB 段线映射、数字与字母、重量和自检 |
+| `src/scale_config.c` | 参数有效性、双页 CRC32、V1 记录升级 |
+| `include/weight_state.h` | 称重统一状态 |
+| `include/firmware_version.h` | 固件版本号与版本显示 |
+| `tools/pio_upload.py` | CMSIS-DAP / J-Link 上传脚本 |
+| `tests/host/check.c` | 实体按键时序、菜单、标定、LCD 编码和 Flash 模拟检查 |
 
 ```powershell
 python tools/run_host_checks.py
+pio run -e scale_py32f002a -e scale_basic -e scale_py32f002a_jlink -e scale_basic_jlink
+python tools/package_firmware.py --version v1.1.0
 ```
 
-检查直接调用当前固件实现，覆盖三点标定、非线性去皮、0.5g 保留、分度切换、毛重限制、命令去重、UART 组帧、配置页写入截断、120 秒待机、唤醒与计时回绕。Windows GCC 可通过 `--cc` 指定：
-
-```powershell
-python tools/run_host_checks.py --cc C:/msys64/ucrt64/bin/gcc.exe
-```
-
-GitHub Actions 在推送和 Pull Request 时运行上述检查，并编译两个 PlatformIO 目标，保存 ELF 构建产物。队友提交步骤见 [团队协作流程](docs/team-workflow.md)。
-
-本版固件核心、协议与模拟检查已完成。接下来的集成任务是 **彩屏/HT1621B 显示、PB1 电池 ADC 与电量模型、RK3566 应用和实物称重验收**；接口与分工入口已写入各专题文档。
-
-## 10. 资料与依赖
-
-- [原理图](docs/hardware/SCH_电子秤原理图_2026-10-29.pdf)
-- [产品需求规格书 5kg V1.0](docs/requirements/01_厨房电子秤产品需求规格书_5kg_V1.0.docx)
-- [项目设计说明书 5kg V1.0](docs/requirements/02_厨房电子秤项目设计说明书_5kg_V1.0.docx)
-- [普冉 PY32F002A 中文数据手册](https://www.puyasemi.com/download_path/数据手册/MCU%20微处理器/PY32F002A系列数据手册_V1.1.pdf)
-- [普冉芯片资料下载页](https://www.puyasemi.com/download.html?keywords=PY32F002A)
-- [PWLINK 接口电平设置](https://docs.powerwriter.com/docs/faq/powerwriter/base/Interface_level/)
-- [依赖来源与版本](docs/third-party.md)
+[需求与功能对照](REQUIREMENTS.md) · [版本变更](CHANGELOG.md) · [团队开发](docs/team-workflow.md) · [段码接线与调试](docs/lcd-mapping.md)

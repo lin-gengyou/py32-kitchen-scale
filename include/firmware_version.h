@@ -1,0 +1,9 @@
+#ifndef SCALE_FIRMWARE_VERSION_H
+#define SCALE_FIRMWARE_VERSION_H
+
+/* 全工程共用版本号，LCD、参数记录和发布包由此保持一致。 */
+#define SCALE_FIRMWARE_VERSION "1.1.0"
+#define SCALE_FIRMWARE_VERSION_CODE 0x00010100U
+#define SCALE_VERSION_DISPLAY "   110"
+
+#endif

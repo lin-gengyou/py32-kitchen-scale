@@ -1,19 +1,20 @@
 /*
  * 电子秤基础固件，入口对应 PlatformIO 的 scale_basic 环境。
- * 数据流为 HX711 原始计数 → 滤波与稳定判定 → 校准换算 → 去皮 → 串口上报。
+ * 数据流为 HX711 原始计数 → 滤波与稳定判定 → 校准换算 → 去皮 → 段码 LCD 显示。
  * 标定、单位、蜂鸣器、判稳和待机设置通过双页 CRC 记录掉电保存。
- * 时序均由毫秒计时调度，采样、按键、蜂鸣器和串口可以交替处理。
+ * 时序均由毫秒计时调度，采样、按键、蜂鸣器和屏幕可以交替处理。
  */
 #include "py32f0xx_hal.h"
 #include "scale_config.h"
 #include "weight_state.h"
+#include "firmware_version.h"
+#include "lcd_ht1621.h"
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
-/* 引脚来自本板原理图。PA13/PA14 由 SWD 使用，PF0/PF1 留给显示接口。 */
+/* 引脚来自本板原理图。PA13/PA14 保留 SWD；PF1 为段码屏 RD。 */
 #define HX711_PORT GPIOA
 #define HX711_DATA_PIN GPIO_PIN_0
 #define HX711_CLOCK_PIN GPIO_PIN_6
@@ -40,8 +41,6 @@ enum {
     BUZZER_ON_MS = 120,
     BUZZER_GAP_MS = 100,
     ALARM_INTERVAL_MS = 2000,
-    UART_BAUD = 9600,
-    MAX_CONFIG_VALUE = 1000000,
     MAX_GROSS_GRAMS = 5000,
     OL_GRAMS = 5250,
     EMPTY_CONFIRM_MS = 3000,
@@ -74,22 +73,12 @@ static int32_t tare_counts;
 static uint32_t reference_grams;
 static bool zero_set;
 
-/* 蜂鸣器使用分段计时，响声之间继续运行采样和串口。 */
+/* 蜂鸣器使用分段计时，响声之间继续运行采样和按键。 */
 static BuzzerMode buzzer_mode = BUZZER_OFF;
 static uint8_t buzzer_remaining;
 static bool buzzer_on;
 static uint32_t buzzer_phase_ms;
 static uint32_t buzzer_tone_ms;
-
-/* 串口使用 ASCII 行协议，命令以 CR 或 LF 结束。收到回复后再发下一条。 */
-static char rx_line[48];
-static uint8_t rx_length;
-static bool rx_ready;
-static bool rx_invalid;
-static char tx_line[192];
-static const char *tx_next;
-static bool stream_enabled = true;
-static uint32_t report_interval_ms = DEFAULT_REPORT_MS;
 
 /* 文档 V1.0 的持久配置和统一状态。电池信息在硬件换算确认前使用未知值。 */
 static ScaleConfig saved_config;
@@ -104,9 +93,6 @@ static uint32_t empty_since_ms;
 static uint32_t zero_track_ms;
 static uint32_t idle_since_ms;
 static bool sleeping;
-static bool tare_sequence_seen;
-static uint32_t last_tare_sequence;
-static char last_tare_reply[80];
 static IWDG_HandleTypeDef watchdog;
 static bool watchdog_ready;
 
@@ -120,7 +106,6 @@ static void board_init(void)
 {
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
-    __HAL_RCC_USART1_CLK_ENABLE();
 
     HAL_GPIO_WritePin(HX711_PORT, HX711_CLOCK_PIN | BUZZER_PIN, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET); /* TFT 片选空闲为高。 */
@@ -144,17 +129,7 @@ static void board_init(void)
     pin.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(KEY_PORT, &pin);
 
-    /* PA2 为 TX，PA3 为 RX，AF1。按 ECB01C 出厂设置使用 9600、8N1。 */
-    USART1->CR1 = 0;
-    USART1->CR2 = 0;
-    USART1->CR3 = 0;
-    USART1->BRR = (HAL_RCC_GetPCLK1Freq() + UART_BAUD / 2U) / UART_BAUD;
-    USART1->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
-    pin.Mode = GPIO_MODE_AF_PP;
-    pin.Pin = GPIO_PIN_2 | GPIO_PIN_3;
-    pin.Pull = GPIO_NOPULL;
-    pin.Alternate = GPIO_AF1_USART1;
-    HAL_GPIO_Init(GPIOA, &pin);
+    /* PA2/PA3 保持复位输入状态，本版不启用串口和蓝牙。 */
 }
 
 /* 固定 8MHz HSI 下，8 条 NOP 提供约 1us 的边沿间隔，另有指令执行开销。 */
@@ -351,6 +326,10 @@ static bool save_settings(const ScaleConfig *candidate)
     saved_config = *candidate;
     stable_counts = candidate->stable_counts;
     buzzer_mode = (BuzzerMode)candidate->buzzer_mode;
+    if (buzzer_mode == BUZZER_OFF) {
+        buzzer_remaining = 0; buzzer_on = false;
+        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+    }
     return true;
 }
 
@@ -361,7 +340,7 @@ static bool overloaded(uint32_t now)
            gross_milligrams(filtered_counts()) > (int64_t)MAX_GROSS_GRAMS * 1000;
 }
 
-/* 检查测量操作的共同前提，并给串口返回可定位的问题。NULL 表示允许执行。 */
+/* 检查测量操作的共同前提，并返回本机界面可显示的原因。NULL 表示允许执行。 */
 static const char *measurement_error(uint32_t now, bool check_capacity)
 {
     if (!samples_ready(now)) {
@@ -452,66 +431,6 @@ static void buzzer_poll(uint32_t now)
     }
 }
 
-/* SW4 按下为低。短按在释放时去皮，长按到 1.5 秒归零，每次长按只触发一次。 */
-static void key_poll(uint32_t now)
-{
-    static bool last_pressed;
-    static bool debounced_pressed;
-    static bool long_handled;
-    static uint32_t changed_ms;
-    static uint32_t pressed_ms;
-    const char *result = NULL;
-    bool pressed = (KEY_PORT->IDR & KEY_PIN) == 0U;
-    if (pressed) { idle_since_ms = now; }
-
-    if (pressed != last_pressed) {
-        last_pressed = pressed;
-        changed_ms = now;
-    }
-    if (pressed != debounced_pressed && (uint32_t)(now - changed_ms) >= KEY_DEBOUNCE_MS) {
-        debounced_pressed = pressed;
-        if (pressed) {
-            pressed_ms = now;
-            long_handled = false;
-            if (sleeping) {
-                wake_scale(now);
-                long_handled = true; /* 唤醒用的这次按键在释放前只做唤醒。 */
-            }
-        } else if (!long_handled) {
-            result = set_tare(now);
-        }
-    }
-    if (debounced_pressed && pressed && !long_handled &&
-        (uint32_t)(now - pressed_ms) >= KEY_LONG_PRESS_MS) {
-        long_handled = true;
-        result = set_zero(now);
-    }
-    if (result != NULL) {
-        buzzer_start(result[0] == 'O' ? 1U : 3U, now);
-    }
-}
-
-/* 严格读取非负整数，空串、符号、单位、尾随空格和超大数字均返回失败。 */
-static bool parse_value(const char *text, uint32_t *result)
-{
-    if (*text == '\0') {
-        return false;
-    }
-    uint32_t value = 0;
-    while (*text >= '0' && *text <= '9') {
-        uint32_t digit = (uint32_t)(*text++ - '0');
-        if (value > (MAX_CONFIG_VALUE - digit) / 10U) {
-            return false;
-        }
-        value = value * 10U + digit;
-    }
-    if (*text != '\0') {
-        return false;
-    }
-    *result = value;
-    return true;
-}
-
 /* 分度选择保留小滞回区，避免 200g 和 1000g 附近因噪声反复切换。 */
 static uint16_t select_division(int32_t net_mg)
 {
@@ -582,360 +501,11 @@ static void weight_update(uint32_t now)
     }
 }
 
-/* 将毫克格式化为一位小数的克数。蓝牙统一使用 g，显示端可按 unit 转换单位。 */
-static void format_grams(char *output, size_t capacity, int32_t milligrams)
-{
-    uint32_t magnitude = milligrams < 0 ? (uint32_t)(-(int64_t)milligrams) : (uint32_t)milligrams;
-    uint32_t decigrams = (magnitude + 50U) / 100U;
-    snprintf(output, capacity, "%s%lu.%lu", milligrams < 0 && decigrams != 0U ? "-" : "",
-             (unsigned long)(decigrams / 10U), (unsigned long)(decigrams % 10U));
-}
-
-/* 文档帧 W,序号,净重g,稳定,皮重g,电量百分比,状态。错误时重量字段留空。 */
-static const char *weight_report(uint32_t now)
-{
-    static const char *const statuses[] = {"WAIT", "UNCAL", "OK", "RANGE", "OL", "ERR", "SLEEP"};
-    weight_update(now);
-    ++weight_state.sequence;
-    if (weight_state.status != WEIGHT_OK) {
-        snprintf(tx_line, sizeof(tx_line), "W,%lu,,0,,%d,%s\r\n",
-                 (unsigned long)weight_state.sequence, (int)weight_state.battery_percent,
-                 statuses[weight_state.status]);
-        return tx_line;
-    }
-    char net[20];
-    char tare[20];
-    format_grams(net, sizeof(net), weight_state.display_mg);
-    format_grams(tare, sizeof(tare), weight_state.tare_mg);
-    snprintf(tx_line, sizeof(tx_line), "W,%lu,%s,%u,%s,%d,OK\r\n",
-             (unsigned long)weight_state.sequence, net, (unsigned)weight_state.stable,
-             tare, (int)weight_state.battery_percent);
-    return tx_line;
-}
-
-/* 状态查询保留调试字段，重量报文只携带平板所需的统一状态。 */
-static const char *status_report(uint32_t now)
-{
-    static const char *const modes[] = {"OFF", "ACTIVE", "PASSIVE"};
-    weight_update(now);
-    snprintf(tx_line, sizeof(tx_line),
-             "S,READY=%u,STABLE=%u,CAL_POINTS=%lu,TARE_COUNTS=%ld,STATUS=%u,"
-             "DIV_MG=%u,EMPTY=%u,AUTO_OFF_S=%lu,SLEEP=%u,BUZZER=%s,UNIT=%s\r\n",
-             (unsigned)samples_ready(now), (unsigned)weight_state.stable,
-             (unsigned long)saved_config.point_count, (long)tare_counts,
-             (unsigned)weight_state.status, (unsigned)weight_state.division_mg,
-             (unsigned)empty_candidate, (unsigned long)saved_config.auto_off_seconds,
-             (unsigned)sleeping, modes[buzzer_mode], saved_config.unit == 0U ? "g" : "kg");
-    return tx_line;
-}
-
-/* 去皮命令序号使用完整 uint32 范围，解析前检查溢出。 */
-static bool parse_sequence(const char *text, uint32_t *result)
-{
-    if (*text == '\0') {
-        return false;
-    }
-    uint32_t value = 0;
-    while (*text >= '0' && *text <= '9') {
-        uint32_t digit = (uint32_t)(*text++ - '0');
-        if (value > (UINT32_MAX - digit) / 10U) {
-            return false;
-        }
-        value = value * 10U + digit;
-    }
-    *result = value;
-    return *text == '\0';
-}
-
-/* 重试最近序号重发原应答，更早的序号拒绝执行，防止断线重传重复去皮。 */
-static const char *sequenced_tare(uint32_t now)
-{
-    uint32_t sequence;
-    if (!parse_sequence(rx_line + 5, &sequence)) {
-        buzzer_start(3, now);
-        return "ERR,TARE,?,BAD_SEQ\r\n";
-    }
-    if (tare_sequence_seen && sequence == last_tare_sequence) {
-        return last_tare_reply;
-    }
-    if (tare_sequence_seen && (uint32_t)(sequence - last_tare_sequence) >= 0x80000000U) {
-        snprintf(tx_line, sizeof(tx_line), "ERR,TARE,%lu,STALE_SEQ\r\n", (unsigned long)sequence);
-        return tx_line;
-    }
-    const char *result = set_tare(now);
-    if (result[0] == 'O') {
-        snprintf(last_tare_reply, sizeof(last_tare_reply), "ACK,TARE,%lu\r\n", (unsigned long)sequence);
-        buzzer_start(1, now);
-    } else {
-        snprintf(last_tare_reply, sizeof(last_tare_reply), "ERR,TARE,%lu,%.*s\r\n",
-                 (unsigned long)sequence, (int)strlen(result) - 6, result + 4);
-        buzzer_start(3, now);
-    }
-    last_tare_sequence = sequence;
-    tare_sequence_seen = true;
-    return last_tare_reply;
-}
-
-/* 标定点按砝码质量递增录入，同一质量重标时废弃后续点，保留单调有效曲线。 */
-static const char *calibrate(uint32_t now)
-{
-    uint32_t grams;
-    if (!parse_value(rx_line + 4, &grams) || grams == 0U || grams > MAX_GROSS_GRAMS || !zero_set) {
-        return "ERR,CAL_NEEDS_ZERO_1_TO_5000G\r\n";
-    }
-    /* 标定依据已确认的砝码质量，旧曲线的偏差不能阻止满量程标定。 */
-    const char *error = measurement_error(now, false);
-    if (error != NULL) {
-        return error;
-    }
-    ScaleConfig candidate = saved_config;
-    unsigned index = 0;
-    while (index < candidate.point_count && candidate.grams[index] < grams) {
-        ++index;
-    }
-    if (index == 3U) {
-        return "ERR,CAL_MAX_3_POINTS\r\n";
-    }
-    candidate.zero_counts = zero_counts;
-    candidate.spans[index] = average_counts() - zero_counts;
-    candidate.grams[index] = grams;
-    candidate.point_count = index + 1U;
-    if (!scale_config_valid(&candidate)) {
-        return "ERR,CAL_SPAN_OR_ORDER\r\n";
-    }
-    if (!save_settings(&candidate)) {
-        return "ERR,FLASH\r\n";
-    }
-    reference_grams = grams;
-    tare_counts = 0;
-    weight_update(now);
-    return "OK,CAL,SAVED\r\n";
-}
-
-/* 分发控制与维护命令。持久设置先验证并保存成功，再应用到运行状态。 */
-static const char *handle_command(uint32_t now)
-{
-    if (rx_invalid) {
-        return "ERR,COMMAND\r\n";
-    }
-    if (strcmp(rx_line, "HELP") == 0) {
-        return "CMDS,ZERO,CAL <g>,CALRESET,TARE[,seq],UNTARE,READ,RAW,STATUS,INFO,"
-               "RATE <100..200>,STREAM <0|1>,BUZZER <OFF|ACTIVE|PASSIVE>,"
-               "UNIT <g|kg>,AUTO_OFF <0..86400>,STABLE <counts>,DEVICE <id>,CALDATE <YYYYMMDD>,WAKE\r\n";
-    }
-    if (strcmp(rx_line, "READ") == 0) {
-        return weight_report(now);
-    }
-    if (strcmp(rx_line, "RAW") == 0) {
-        if (!samples_ready(now)) {
-            return "ERR,WAIT_SAMPLES\r\n";
-        }
-        snprintf(tx_line, sizeof(tx_line), "RAW,%ld\r\n", (long)latest_raw);
-        return tx_line;
-    }
-    if (strcmp(rx_line, "STATUS") == 0) {
-        return status_report(now);
-    }
-    if (strcmp(rx_line, "INFO") == 0) {
-        snprintf(tx_line, sizeof(tx_line), "INFO,FW=1.0.2,ID=%s,CAL_DATE=%lu,PROTO=2,CAP_G=5000,OL_G=5250,BAT=-1,WDG=%u\r\n",
-                 saved_config.device_id, (unsigned long)saved_config.calibration_date, (unsigned)watchdog_ready);
-        return tx_line;
-    }
-    if (strncmp(rx_line, "TARE,", 5) == 0) {
-        return sequenced_tare(now);
-    }
-    if (strcmp(rx_line, "UNTARE") == 0) {
-        tare_counts = 0;
-        weight_update(now);
-        return "OK,UNTARE\r\n";
-    }
-    if (strcmp(rx_line, "TARE") == 0) {
-        return set_tare(now);
-    }
-    if (strcmp(rx_line, "ZERO") == 0) {
-        return set_zero(now);
-    }
-    if (strcmp(rx_line, "CALRESET") == 0) {
-        ScaleConfig candidate = saved_config;
-        candidate.zero_counts = 0;
-        candidate.point_count = 0;
-        memset(candidate.spans, 0, sizeof(candidate.spans));
-        memset(candidate.grams, 0, sizeof(candidate.grams));
-        if (!save_settings(&candidate)) {
-            return "ERR,FLASH\r\n";
-        }
-        zero_counts = 0;
-        reference_grams = 0;
-        tare_counts = 0;
-        zero_set = false;
-        empty_reference_known = false;
-        weight_update(now);
-        return "OK,CALRESET\r\n";
-    }
-    if (strncmp(rx_line, "CAL ", 4) == 0) {
-        return calibrate(now);
-    }
-    if (strncmp(rx_line, "LIMIT ", 6) == 0) {
-        return strcmp(rx_line, "LIMIT 5000") == 0 ? "OK,LIMIT\r\n" : "ERR,LIMIT_FIXED_5000\r\n";
-    }
-    if (strncmp(rx_line, "STABLE ", 7) == 0) {
-        uint32_t value;
-        if (!parse_value(rx_line + 7, &value) || value == 0U) {
-            return "ERR,STABLE_COUNTS\r\n";
-        }
-        ScaleConfig candidate = saved_config;
-        candidate.stable_counts = value;
-        if (!save_settings(&candidate)) {
-            return "ERR,FLASH\r\n";
-        }
-        sample_reset();
-        return "OK,STABLE\r\n";
-    }
-    if (strncmp(rx_line, "RATE ", 5) == 0) {
-        uint32_t value;
-        if (!parse_value(rx_line + 5, &value) || value < MIN_REPORT_MS || value > MAX_REPORT_MS) {
-            return "ERR,RATE_100_TO_200_MS\r\n";
-        }
-        report_interval_ms = value;
-        return "OK,RATE\r\n";
-    }
-    if (strcmp(rx_line, "STREAM 0") == 0 || strcmp(rx_line, "STREAM 1") == 0) {
-        stream_enabled = rx_line[7] == '1';
-        return "OK,STREAM\r\n";
-    }
-    if (strncmp(rx_line, "BUZZER ", 7) == 0) {
-        const char *mode = rx_line + 7;
-        ScaleConfig candidate = saved_config;
-        if (strcmp(mode, "OFF") == 0) {
-            candidate.buzzer_mode = BUZZER_OFF;
-        } else if (strcmp(mode, "ACTIVE") == 0) {
-            candidate.buzzer_mode = BUZZER_ACTIVE;
-        } else if (strcmp(mode, "PASSIVE") == 0) {
-            candidate.buzzer_mode = BUZZER_PASSIVE;
-        } else {
-            return "ERR,BUZZER_MODE\r\n";
-        }
-        if (!save_settings(&candidate)) {
-            return "ERR,FLASH\r\n";
-        }
-        buzzer_remaining = 0;
-        buzzer_on = false;
-        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
-        buzzer_start(1, now);
-        return "OK,BUZZER\r\n";
-    }
-    if (strncmp(rx_line, "AUTO_OFF ", 9) == 0) {
-        uint32_t seconds;
-        if (!parse_value(rx_line + 9, &seconds) || seconds > 86400U) {
-            return "ERR,AUTO_OFF_SECONDS\r\n";
-        }
-        ScaleConfig candidate = saved_config;
-        candidate.auto_off_seconds = seconds;
-        return save_settings(&candidate) ? "OK,AUTO_OFF\r\n" : "ERR,FLASH\r\n";
-    }
-    if (strncmp(rx_line, "UNIT ", 5) == 0) {
-        ScaleConfig candidate = saved_config;
-        if (strcmp(rx_line + 5, "g") == 0) {
-            candidate.unit = 0;
-        } else if (strcmp(rx_line + 5, "kg") == 0) {
-            candidate.unit = 1;
-        } else {
-            return "ERR,UNIT\r\n";
-        }
-        return save_settings(&candidate) ? "OK,UNIT\r\n" : "ERR,FLASH\r\n";
-    }
-    if (strncmp(rx_line, "DEVICE ", 7) == 0) {
-        const char *id = rx_line + 7;
-        size_t length = strlen(id);
-        if (length == 0 || length >= sizeof(saved_config.device_id)) {
-            return "ERR,DEVICE_ID\r\n";
-        }
-        for (size_t i = 0; i < length; ++i) {
-            if (!((id[i] >= '0' && id[i] <= '9') || (id[i] >= 'A' && id[i] <= 'Z') ||
-                  (id[i] >= 'a' && id[i] <= 'z') || id[i] == '-' || id[i] == '_')) {
-                return "ERR,DEVICE_ID\r\n";
-            }
-        }
-        ScaleConfig candidate = saved_config;
-        memset(candidate.device_id, 0, sizeof(candidate.device_id));
-        memcpy(candidate.device_id, id, length);
-        return save_settings(&candidate) ? "OK,DEVICE\r\n" : "ERR,FLASH\r\n";
-    }
-    if (strncmp(rx_line, "CALDATE ", 8) == 0) {
-        uint32_t date;
-        if (!parse_sequence(rx_line + 8, &date)) {
-            return "ERR,CALDATE\r\n";
-        }
-        unsigned year = date / 10000U;
-        unsigned month = date / 100U % 100U;
-        unsigned day = date % 100U;
-        static const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
-        bool leap = year % 4U == 0 && (year % 100U != 0 || year % 400U == 0);
-        if (year < 2000U || year > 9999U || month < 1U || month > 12U || day < 1U ||
-            day > days[month - 1U] + (unsigned)(month == 2U && leap)) {
-            return "ERR,CALDATE\r\n";
-        }
-        ScaleConfig candidate = saved_config;
-        candidate.calibration_date = date;
-        return save_settings(&candidate) ? "OK,CALDATE\r\n" : "ERR,FLASH\r\n";
-    }
-    if (strcmp(rx_line, "WAKE") == 0) {
-        wake_scale(now);
-        return "OK,WAKE\r\n";
-    }
-    return "ERR,COMMAND\r\n";
-}
-
-/* 每轮最多收发一个字节。接收错误或超长行一直作废到行尾，防止误执行截断命令。 */
-static void uart_poll(uint32_t now)
-{
-    uint32_t status = USART1->SR;
-    const uint32_t errors = USART_SR_ORE | USART_SR_NE | USART_SR_FE | USART_SR_PE;
-    if ((status & (USART_SR_RXNE | errors)) != 0U) {
-        idle_since_ms = now;
-        if (sleeping) { wake_scale(now); }
-        uint8_t byte = (uint8_t)USART1->DR; /* 读 SR 后读 DR，清除接收错误标志。 */
-        if (!rx_ready) {
-            if ((status & errors) != 0U) {
-                rx_invalid = true;
-            } else if (byte == '\r' || byte == '\n') {
-                if (rx_length != 0U || rx_invalid) {
-                    rx_line[rx_length] = '\0';
-                    rx_ready = true;
-                }
-            } else if (byte < 32U || byte > 126U || rx_length == sizeof(rx_line) - 1U) {
-                rx_invalid = true;
-            } else if (!rx_invalid) {
-                rx_line[rx_length++] = (char)byte;
-            }
-        }
-    }
-    if (tx_next == NULL && rx_ready) {
-        tx_next = handle_command(now);
-        /* 带序号去皮在去重分支内提示。其他命令成功一声、失败三声，查询结果保持安静。 */
-        if (strncmp(rx_line, "TARE,", 5) != 0) {
-            if (strncmp(tx_next, "ERR,", 4) == 0) {
-                buzzer_start(3, now);
-            } else if (strncmp(tx_next, "OK,", 3) == 0) {
-                buzzer_start(1, now);
-            }
-        }
-        rx_length = 0;
-        rx_ready = false;
-        rx_invalid = false;
-    }
-    if (tx_next != NULL && (status & USART_SR_TXE) != 0U) {
-        USART1->DR = (uint8_t)*tx_next++;
-        if (*tx_next == '\0') {
-            tx_next = NULL;
-        }
-    }
-}
-
-/* 软件待机使 HX711 掉电并熄灭 LED，主控保留串口、按键和毫秒唤醒。 */
+/* 软件待机关闭段码屏、HX711 和 LED；按键轮询和毫秒时基负责唤醒。 */
 static void enter_standby(void)
 {
     sleeping = true;
+    lcd_power(false);
     sample_reset();
     HAL_GPIO_WritePin(HX711_PORT, HX711_CLOCK_PIN, GPIO_PIN_SET);
     HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
@@ -953,6 +523,7 @@ static void wake_scale(uint32_t now)
         return;
     }
     sleeping = false;
+    lcd_power(true);
     HAL_GPIO_WritePin(HX711_PORT, HX711_CLOCK_PIN, GPIO_PIN_RESET);
     sample_reset();
     sample_fault = false;
@@ -1028,7 +599,10 @@ static void watchdog_start(void)
     watchdog_ready = HAL_IWDG_Init(&watchdog) == HAL_OK;
 }
 
-/* 主循环按顺序轮询各外设。LED 心跳与串口上报分开计时，关掉上报仍能看见运行状态。 */
+/* 本机界面直接复用上述测量与存储逻辑。 */
+#include "scale_ui.inc"
+
+/* 主循环交替处理采样、按键、屏幕与蜂鸣器，菜单编辑期间继续采样。 */
 int main(void)
 {
     HAL_Init();
@@ -1045,7 +619,9 @@ int main(void)
     }
     started_ms = HAL_GetTick();
     last_sample_ms = started_ms;
-    uint32_t report_ms = started_ms;
+    ui.startup_ms = started_ms;
+    display_interval_ms = saved_config.display_interval_ms;
+    lcd_init();
     uint32_t led_ms = started_ms;
     uint32_t power_ms = started_ms;
     idle_since_ms = started_ms;
@@ -1059,22 +635,18 @@ int main(void)
         }
         sample_poll(now);
         key_poll(now);
-        uart_poll(now);
         if ((uint32_t)(now - power_ms) >= 10U) {
             power_ms = now;
-            power_poll(now);
-            alarm_poll(now);
+            if (ui.page == UI_WEIGH) { power_poll(now); alarm_poll(now); }
+            else { idle_since_ms = now; empty_candidate = false; }
         }
         buzzer_poll(now);
         if (!sleeping && (uint32_t)(now - led_ms) >= 500U) {
             led_ms = now;
             HAL_GPIO_TogglePin(LED_PORT, LED_PIN);
         }
-        if (stream_enabled && (uint32_t)(now - report_ms) >= report_interval_ms && tx_next == NULL) {
-            report_ms = now;
-            tx_next = weight_report(now);
-        }
-        if (sleeping && tx_next == NULL) {
+        ui_render(now);
+        if (sleeping) {
             __WFI();
         }
     }

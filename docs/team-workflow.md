@@ -4,13 +4,13 @@
 
 1. 克隆仓库，安装README中的开发环境。
 2. 运行两个目标的Build，按README完成点灯、称重固件下载和三点标定。
-3. 阅读两份PDF中的硬件定位与代码图解，按下面的分工入口开发。
+3. 阅读v1.1.0按键指南与硬件连接说明，按下面的分工入口开发。
 
 | 方向 | 起始文件 / 接口 | 交付内容 |
 |---|---|---|
 | 称重与滤波 | `src/scale_basic.c`：sample_add、weight_update、gross_milligrams | 固件改动与砝码测量记录 |
-| 按键、蜂鸣、待机 | 同文件的key_poll、buzzer_poll、power_poll | 状态转换与实物操作记录 |
-| 彩屏与段码屏 | `include/weight_state.h`、硬件文档屏幕接口 | 控制器/段映射、显示驱动、统一状态刷新 |
+| 按键、蜂鸣、待机 | src/scale_ui.inc的key_poll；主文件buzzer_poll、power_poll | 状态转换与实物操作记录 |
+| 彩屏与段码屏 | `include/weight_state.h`、硬件文档屏幕接口 | 当前HT1621段映射与刷新；彩屏后续接入 |
 | 电池检测 | PB1 BAT-ADC、WeightState.battery_percent | ADC校准、电量曲线、低电提示 |
 | 手机 / RK3566 | `docs/protocol.md` | BLE连接、通知组帧、命令队列、UI、重连 |
 | 整机验收 | `REQUIREMENTS.md`、`docs/measurements/` | 全量程、重复、偏载、漂移和连续运行记录 |
@@ -50,11 +50,11 @@ git push -u origin feature/功能名称
 ## 4. 发布固件与文档
 
 1. 在`main`上构建两个目标并运行模拟检查。
-2. 更新固件版本、协议说明、需求对照和实物记录。
+2. 更新include/firmware_version.h、按键指南、需求对照与版本变更。
 3. 运行`python tools/package_firmware.py --version 版本号`，生成ELF与SHA-256清单。
-4. 更新两份PDF的代码图与说明；仓库内1.0.2手册是该版源码快照，行号在图下列出。
-5. 将代码和对应固件作为同一版发布，队友通过INFO核对设备版本。
+4. 以docs/button-guide.md维护当前操作；两份1.0.2 PDF作为历史快照保留。
+5. 将代码和对应固件作为同一版发布，队友通过板上InFo菜单核对设备版本。
 
 ## 5. 两种平台工作分配
 
-MCU负责ADC、滤波、标定、重量状态、控制、蜂鸣与参数存储。RK3566或手机负责扫描连接、自动重连、文本组帧、去皮请求序号、界面和记录。协议统一以g传输重量，显示单位由应用或本地显示任务完成换算。
+v1.1.0由MCU在板上完成ADC、滤波、标定、按键菜单、段码显示、蜂鸣、待机与参数保存。蓝牙和平板功能留作后续独立版本；docs/protocol.md保存v1.0.2接口。

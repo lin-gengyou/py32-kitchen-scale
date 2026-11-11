@@ -1,0 +1,30 @@
+{
+  "version": "v1.1.0",
+  "interface": "SW4 + HT1621B segmented LCD",
+  "serial_enabled": false,
+  "source_sha256": {
+    "boards/scale_py32f002a.json": "68ee09365b0448fa9b20897270ea51b4857c1d5ec27d2887ebb692556e759060",
+    "include/firmware_version.h": "31bf1cfc5f51315ad88cfda3d0dab7d9121be27c8275057c153a0f93c93c36b3",
+    "include/lcd_ht1621.h": "70e38b9eee695e3c92631d86c6f772cfe87fad516324ee66d3e2dd00f9935cef",
+    "include/py32f0xx_hal_conf.h": "2e7a8de892656a1886231c1ebe2bbd9e348bb6244f0d34b100f27c24d3d5126f",
+    "include/scale_config.h": "a484423c3fe3519b4d5b44a14146b148a9be295d854ddc470c6a90003c6cb114",
+    "include/weight_state.h": "d49d46442fe9fed2513042d8dce78a2f31efc661317435ad1051d5e25ed1e6e5",
+    "ldscripts/scale_py32f002a.ld": "cabdab17e2b906eca7d9633fd5d9dcd19cd1909c824aee3b5900427b285e692b",
+    "platformio.ini": "b53b920ffe93910bec224d2c63d16687ff504fd11b1660b24fea159aab2b43cc",
+    "pyocd.yaml": "1cc001e4508f1cbaf4aa48e664d52eff4141903db4dac01e8d357c0ad154b1fc",
+    "src/interrupts.c": "a1e50cd591bcf6a677e884f92e09860c478b61be35f768cce750adeea5a85747",
+    "src/lcd_ht1621.c": "ceb77652600cf32c2a2907aaa21bca09fa62c530e2e20fa236131f9bc357f732",
+    "src/main.c": "08a7890638a42d4f828728e62934eefb20821b3d9cdfe1fa53406ce91018155f",
+    "src/scale_basic.c": "4aa8317755018f155197e9a953838a6e38bdb3f7b9dfebc4ad445e8b45793fc1",
+    "src/scale_config.c": "53ea63045cc52b32487660bcca2c2db7bafd3c8b9e74cdc7e0063f9e33af8417",
+    "src/scale_ui.inc": "c513508967419ede297945cd8180f25b7e3ca35e001d3256369df4e624436cb5",
+    "src/system_clock.c": "822f850c5b9b9844aef548259e3fdd623e730d52982841814c7218f946763f06",
+    "tools/package_firmware.py": "7b9e86cbeab87e756ae4da23e0812c099aa655c88d30c6ae123ccf08cea6de9c",
+    "tools/pio_artifacts.py": "a7ccd60ba5a51c487ee0206b6790a8603e45af26465215a4853403ac453d8152",
+    "tools/pio_size.py": "54b1a1b00119d91796430cff1b3e15d7cf42b2a7838535d5ffac204cc786d501",
+    "tools/pio_upload.py": "062d36dcd9fc2f2d1adf28179f5d7b0cf884887f43659efb74c998324c2dbd8f",
+    "tools/run_host_checks.py": "1e96e4b9a3f63c0651b865566d9ff19d8b914ac176b3f15088d18d9b6e2126b3",
+    "tools/setup_pack.py": "7aa7c6392bde11a8f29d9829dc9d5266b62976de80588ec5ea8ef9058631c1fc",
+    "tools/swd_diagnose.py": "862fae223b67df79a7e0d8cff399193f6c9133ae85875afb238062fdb29a4641"
+  }
+}

@@ -1,4 +1,4 @@
-/* 直接包含固件实现，模拟 ADC 输入、UART 字节和两页 Flash 的写入中断。 */
+/* 直接包含固件实现，模拟 ADC、实体键时序、LCD 编码和两页 Flash 的写入中断。 */
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -33,56 +33,15 @@ HAL_StatusTypeDef HAL_FLASH_Program(uint32_t type, uintptr_t address, uint32_t *
 }
 #define SCALE_CONFIG_BASE ((uintptr_t)host_flash)
 #include "../../src/scale_config.c"
+#define SCALE_HOST_TEST 1
+#include "../../src/lcd_ht1621.c"
 #define main firmware_main
 #include "../../src/scale_basic.c"
 #undef main
 
-GPIO_TypeDef host_gpio_a, host_gpio_b;
+GPIO_TypeDef host_gpio_a, host_gpio_b, host_gpio_f;
 USART_TypeDef host_usart;
 bool host_dbg_clock_enabled, host_iwdg_frozen;
-
-static void command(const char *input, const char *expected, uint32_t now)
-{
-    assert(strlen(input) < sizeof(rx_line));
-    strcpy(rx_line, input);
-    rx_invalid = false;
-    const char *actual = handle_command(now);
-    if (strcmp(actual, expected) != 0) {
-        fprintf(stderr, "Command %s: expected %s, got %s", input, expected, actual);
-        assert(false);
-    }
-}
-
-static void settle(int32_t counts, uint32_t *now)
-{
-    for (unsigned i = 0; i < 18; ++i) {
-        *now += 100U;
-        sample_add(counts, *now);
-    }
-    assert(stable && samples_ready(*now));
-    weight_update(*now);
-}
-
-static const char *uart_request(const char *input, uint32_t now)
-{
-    static char response[512];
-    assert(tx_next == NULL);
-    while (*input != '\0') {
-        USART1->SR = USART_SR_RXNE;
-        USART1->DR = (uint8_t)*input++;
-        uart_poll(now);
-    }
-    unsigned length = 0;
-    while (tx_next != NULL) {
-        assert(length < sizeof(response) - 1U);
-        USART1->SR = USART_SR_TXE;
-        uart_poll(now);
-        response[length++] = (char)USART1->DR;
-    }
-    response[length] = '\0';
-    USART1->SR = 0;
-    return response;
-}
 
 static void storage_checks(void)
 {
@@ -128,244 +87,231 @@ static void storage_checks(void)
     memset(host_flash, 0xff, sizeof(host_flash));
 }
 
+static void settle(int32_t counts, uint32_t *now)
+{
+    for (unsigned i = 0; i < 18; ++i) { *now += 100U; sample_add(counts, *now); }
+    assert(stable && samples_ready(*now));
+    weight_update(*now);
+}
+
+/* 实际调用消抖轮询，不直接跳过实体键状态机。持续采样避免长按造成假超时。 */
+static void key_time(bool pressed, unsigned milliseconds, int32_t counts, uint32_t *now)
+{
+    host_gpio_b.IDR = pressed ? 0U : KEY_PIN;
+    for (unsigned i = 0; i < milliseconds; ++i) {
+        ++*now;
+        if (*now % 100U == 0U) { sample_add(counts, *now); }
+        key_poll(*now);
+    }
+}
+
+static void open_item(UiMenu item, uint32_t now)
+{
+    ui.page = UI_MENU; ui.menu = item; ui_event(KEY_HOLD, now);
+}
+
+static void local_calibration(uint32_t *now, int direction, unsigned points)
+{
+    open_item(MENU_CAL, *now);
+    assert(ui.page == UI_CAL_COUNT);
+    ui.cal_count = points;
+    ui_event(KEY_HOLD, *now);
+    assert(ui.page == UI_CAL_EMPTY);
+    settle(100000, now);
+    unsigned before = flash_program_count;
+    ui_event(KEY_HOLD, *now);
+    assert(ui.page == UI_EDIT && ui.edit_kind == EDIT_MASS);
+    static const uint32_t grams[] = {500,2500,5000};
+    for (unsigned i = 0; i < points; ++i) {
+        ui.value = grams[i];
+        ui_event(KEY_HOLD, *now);
+        assert(ui.page == UI_CAL_LOAD);
+        settle(100000 + direction * (int32_t)(grams[i] * 1000U), now);
+        ui_event(KEY_HOLD, *now);
+        if (i + 1U != points) { assert(flash_program_count == before && ui.page == UI_EDIT); }
+    }
+    assert(ui.page == UI_WEIGH && saved_config.point_count == points);
+    assert(saved_config.spans[points - 1U] == direction * (int32_t)(grams[points - 1U] * 1000U));
+}
+
 int main(void)
 {
-    /* 没有先开启调试时钟时，冻结寄存器写入不应被模拟为有效。 */
-    host_dbg_clock_enabled = false;
-    host_iwdg_frozen = false;
     watchdog_start();
     assert(host_dbg_clock_enabled && host_iwdg_frozen && watchdog_ready);
     watchdog_ready = false;
     storage_checks();
+    /* 用旧布局构造真实 V1 记录，验证刷新周期字段升级不会丢失旧标定。 */
+    ScaleConfig legacy;
+    scale_config_defaults(&legacy);
+    legacy.zero_counts = 12345; legacy.spans[0] = -500000; legacy.grams[0] = 500; legacy.point_count = 1;
+    ConfigRecord v1 = {.magic=CONFIG_MAGIC,.version=1,.generation=7,.firmware_version=0x10002,.config=legacy};
+    const size_t old_length = offsetof(ConfigRecord, config) + offsetof(ScaleConfig, display_interval_ms);
+    uint32_t crc = config_crc(&v1, old_length);
+    memcpy(host_flash, &v1, old_length); memcpy((uint8_t *)host_flash + old_length, &crc, 4);
+    ScaleConfig recovered;
+    assert(scale_config_load(&recovered) && recovered.zero_counts == 12345);
+    assert(recovered.display_interval_ms == 200 && recovered.point_count == 1);
+    recovered.display_interval_ms = 100;
+    assert(scale_config_save(&recovered) && scale_config_load(&recovered));
+    assert(recovered.point_count == 1 && recovered.display_interval_ms == 100);
+    memset(host_flash, 0xff, sizeof(host_flash));
+
     scale_config_load(&saved_config);
     uint32_t now = 0;
-    command("ZERO", "ERR,WAIT_SAMPLES\r\n", now);
-    command("TARE", "ERR,NEED_CAL\r\n", now);
-    settle(100000, &now);
-    command("ZERO", "OK,ZERO\r\n", now);
-    command("CAL 500", "ERR,CAL_SPAN_OR_ORDER\r\n", now);
-    settle(-400000, &now);
-    command("CAL 500", "OK,CAL,SAVED\r\n", now);
-    settle(-2400000, &now);
-    command("CAL 2500", "OK,CAL,SAVED\r\n", now);
-    settle(-4900000, &now);
-    saved_config.spans[1] = -2450000; /* 模拟初步曲线把真实 5000g 换算得偏大。 */
-    assert(overloaded(now));
-    command("CAL 5000", "OK,CAL,SAVED\r\n", now);
-    saved_config.spans[1] = -2500000;
-    assert(scale_config_save(&saved_config)); /* 后续测试恢复每计数 1mg 的线性夹具。 */
-    assert(saved_config.point_count == 3 && saved_config.spans[2] == -5000000);
-    ScaleConfig recovered;
+    lcd_init();
+    assert((host_gpio_f.ODR & GPIO_PIN_1) && (host_gpio_a.ODR & GPIO_PIN_4));
+    ui_event(KEY_TAP, now);
+    assert(strcmp(ui.message, "no CAL") == 0);
+    /* 本机三点标定，负方向传感器；直到最后一步才提交一次。 */
+    local_calibration(&now, -1, 3);
     assert(scale_config_load(&recovered) && recovered.point_count == 3);
     assert(gross_milligrams(-156400) == 256400);
     assert(gross_milligrams(100500) == -500);
-    /* 非线性分段标定必须分别换算毛重与皮重，再求净重。 */
-    saved_config.spans[1] = -2400000;
-    saved_config.spans[2] = -4900000;
+
+    /* 中途退出新标定：原有 Flash、运行时零点与三点曲线完整保留。 */
+    unsigned writes = flash_program_count;
+    open_item(MENU_CAL, now); ui_event(KEY_HOLD, now);
+    settle(200000, &now); ui_event(KEY_HOLD, now);
+    assert(ui.page == UI_EDIT && ui.calibration.zero_counts == 200000);
+    ui_event(KEY_MENU, now);
+    assert(ui.page == UI_MENU && flash_program_count == writes);
+    assert(zero_counts == 100000 && saved_config.point_count == 3);
+
+    /* 不稳定时不能取得标定基线，也不能执行去皮。 */
+    open_item(MENU_CAL, now); ui_event(KEY_HOLD, now);
+    sample_reset(); ui_event(KEY_HOLD, now);
+    assert(ui.page == UI_CAL_EMPTY && flash_program_count == writes);
+    ui.page = UI_WEIGH;
+    assert(strcmp(set_tare(now), "ERR,WAIT_SAMPLES\r\n") == 0);
+
+    /* 非线性曲线先分别换算毛重与皮重，再求净重。 */
+    saved_config.spans[1] = -2400000; saved_config.spans[2] = -4900000;
     tare_counts = -500000;
     settle(-1350000, &now);
     assert(weight_state.net_mg == 1000000);
-    saved_config = recovered;
-    tare_counts = 0;
-
-    /* 文档要求的小重量保持，归零不能吞掉 0.5g。 */
+    saved_config = recovered; tare_counts = 0;
     settle(99500, &now);
     assert(weight_state.net_mg == 500 && weight_state.display_mg == 500);
-    assert(strstr(weight_report(now), ",0.5,1,0.0,-1,OK\r\n") != NULL);
-    command("ZERO", "ERR,NOT_EMPTY\r\n", now);
+    assert(strcmp(set_zero(now), "ERR,NOT_EMPTY\r\n") == 0);
     assert(zero_counts == 100000);
     settle(100000, &now);
-    command("ZERO", "OK,ZERO\r\n", now);
     sample_add(-8000000, ++now);
-    assert(stable && filtered_counts() == 100000); /* 单个尖峰被中值滤波去掉。 */
-    sample_add(100000, ++now);
-    assert(filtered_counts() == 100000);
-
-    /* 最后一步量化，且在两个边界上有小滞回。 */
+    assert(stable && filtered_counts() == 100000);
+    sample_add(100000, ++now); assert(filtered_counts() == 100000);
     weight_state.division_mg = 100;
-    assert(select_division(200000) == 100);
-    assert(select_division(200600) == 500);
+    assert(select_division(200000) == 100 && select_division(200600) == 500);
     weight_state.division_mg = 500;
-    assert(select_division(199600) == 500);
-    assert(select_division(199400) == 100);
+    assert(select_division(199600) == 500 && select_division(199400) == 100);
     assert(select_division(1001100) == 1000);
     weight_state.division_mg = 1000;
-    assert(select_division(999500) == 1000);
-    assert(select_division(998900) == 500);
-    settle(-100600, &now);
-    assert(weight_state.display_mg == 200500);
+    assert(select_division(999500) == 1000 && select_division(998900) == 500);
 
-    /* 去皮后的总负载仍受 5kg 限制，5250g 为单独的 OL 门限。 */
-    settle(-2900000, &now); /* 毛重 3000g。 */
-    command("TARE", "OK,TARE\r\n", now);
-    assert(sample_count == FAST_SAMPLES && weight_state.net_mg == 0);
-    settle(-4901000, &now);
-    assert(weight_state.status == WEIGHT_RANGE);
-    assert(strstr(weight_report(now), ",,0,,-1,RANGE\r\n") != NULL);
-    command("TARE", "ERR,OVERLOAD\r\n", now);
-    settle(-5150000, &now);
-    assert(weight_state.status == WEIGHT_OVERLOAD);
-    assert(strstr(weight_report(now), ",,0,,-1,OL\r\n") != NULL);
-    settle(100000, &now);
-    assert(weight_state.net_mg == -3000000 && weight_state.display_mg == -3000000);
-    command("UNTARE", "OK,UNTARE\r\n", now);
-    command("LIMIT 0", "ERR,LIMIT_FIXED_5000\r\n", now);
-    command("RATE 200", "OK,RATE\r\n", now);
-    command("RATE 201", "ERR,RATE_100_TO_200_MS\r\n", now);
-
-    /* 相同去皮序号重复应答，不再次归零，更早序号拒绝执行。 */
+    /* 实体双击仅切单位，不会先去皮；第二次按住超过双击窗口仍算同一双击。 */
+    ui.page = UI_WEIGH;
     settle(-20000, &now);
-    command("TARE,17", "ACK,TARE,17\r\n", now);
-    int32_t first_tare = tare_counts;
-    settle(-156400, &now);
-    assert(weight_state.net_mg == 136400);
-    command("TARE,17", "ACK,TARE,17\r\n", now);
-    assert(tare_counts == first_tare);
-    command("TARE,16", "ERR,TARE,16,STALE_SEQ\r\n", now);
-    command("TARE,18", "ACK,TARE,18\r\n", now);
-    command("TARE,19", "ERR,TARE,19,UNSTABLE\r\n", now);
-    settle(-156400, &now);
-    command("TARE,19", "ERR,TARE,19,UNSTABLE\r\n", now);
-    assert(tare_counts == -256400);
-    uint32_t sequence;
-    assert(parse_sequence("4294967295", &sequence) && sequence == UINT32_MAX);
-    assert(!parse_sequence("4294967296", &sequence));
-    assert(!parse_sequence("", &sequence));
-
-    /* 参数失败不修改内存或已保存记录，日期校验支持闰年。 */
-    command("AUTO_OFF 120", "OK,AUTO_OFF\r\n", now);
-    command("UNIT kg", "OK,UNIT\r\n", now);
-    command("DEVICE SCALE-001", "OK,DEVICE\r\n", now);
-    command("CALDATE 20240229", "OK,CALDATE\r\n", now);
-    command("CALDATE 20260229", "ERR,CALDATE\r\n", now);
-    assert(saved_config.calibration_date == 20240229);
-    flash_write_bytes = 24;
-    command("UNIT g", "ERR,FLASH\r\n", now);
-    assert(saved_config.unit == 1);
-    assert(scale_config_load(&recovered) && recovered.unit == 1);
-    flash_write_bytes = 128;
-    command("UNIT g", "OK,UNIT\r\n", now);
-    command("BUZZER ACTIVE", "OK,BUZZER\r\n", now);
-    buzzer_start(3, now);
-    for (unsigned i = 0; i < 3; ++i) {
-        buzzer_poll(now += BUZZER_ON_MS);
-        assert(!buzzer_on);
-        if (i < 2) { buzzer_poll(now += BUZZER_GAP_MS); assert(buzzer_on); }
-    }
-    assert(buzzer_remaining == 0 && !(host_gpio_a.ODR & BUZZER_PIN));
-    command("BUZZER OFF", "OK,BUZZER\r\n", now);
-    /* 实体键短按释放时去皮，长按在空秤时归零，释放不会重复去皮。 */
-    command("UNTARE", "OK,UNTARE\r\n", now);
-    settle(-20000, &now);
-    host_gpio_b.IDR = KEY_PIN;
-    key_poll(now);
-    host_gpio_b.IDR = 0;
-    key_poll(++now);
-    key_poll(now += KEY_DEBOUNCE_MS);
+    key_time(false, 50, -20000, &now);
+    key_time(true, 100, -20000, &now); key_time(false, 100, -20000, &now);
     assert(tare_counts == 0);
-    host_gpio_b.IDR = KEY_PIN;
-    key_poll(now += 100U);
-    key_poll(now += KEY_DEBOUNCE_MS);
+    key_time(true, 500, -20000, &now); key_time(false, 400, -20000, &now);
+    assert(saved_config.unit == 1 && tare_counts == 0);
+    key_time(true, 100, -20000, &now); key_time(false, 400, -20000, &now);
     assert(tare_counts == -120000);
-    settle(100000, &now);
-    host_gpio_b.IDR = 0;
-    key_poll(++now);
-    key_poll(now += KEY_DEBOUNCE_MS);
-    for (unsigned i = 0; i < 20; ++i) {
-        now += 100U;
-        sample_add(100000, now);
-        key_poll(now);
-    }
-    assert(tare_counts == 0 && zero_counts == 100000);
-    host_gpio_b.IDR = KEY_PIN;
-    key_poll(++now);
-    key_poll(now += KEY_DEBOUNCE_MS);
-    assert(tare_counts == 0);
+    /* 持续三秒不提前归零，释放后进入菜单。 */
+    key_time(true, 3200, 100000, &now);
+    assert(ui.page == UI_WEIGH && tare_counts == -120000);
+    key_time(false, 40, 100000, &now);
+    assert(ui.page == UI_MENU && tare_counts == -120000);
+    ui_event(KEY_DOUBLE, now);
+    key_time(true, 1700, 100000, &now); key_time(false, 400, 100000, &now);
+    assert(tare_counts == 0 && zero_counts == 100000 && ui.page == UI_WEIGH);
 
-    /* 空秤持续稳定且 120 秒无操作才待机，真实 0.5g 负载阻止待机和跟踪。 */
-    command("UNTARE", "OK,UNTARE\r\n", now);
-    settle(99500, &now);
-    int32_t zero_before = zero_counts;
-    for (unsigned i = 0; i < 1300; ++i) {
-        now += 100U;
-        sample_add(99500, now);
-        power_poll(now);
+    /* 毛重限制不能被去皮绕过，移走容器显示负数。 */
+    settle(-2900000, &now); ui_event(KEY_TAP, now);
+    settle(-4901000, &now); assert(weight_state.status == WEIGHT_RANGE);
+    assert(strcmp(set_tare(now), "ERR,OVERLOAD\r\n") == 0);
+    settle(-5150000, &now); assert(weight_state.status == WEIGHT_OVERLOAD);
+    settle(100000, &now); assert(weight_state.display_mg == -3000000);
+    open_item(MENU_UNTARE, now); assert(tare_counts == 0 && ui.page == UI_WEIGH);
+
+    /* 所有设置由本机菜单提交：非法值、非法日期和半页写入均不破坏旧配置。 */
+    open_item(MENU_OFF, now); ui.value=86401; ui_event(KEY_HOLD,now);
+    assert(ui.page==UI_EDIT && saved_config.auto_off_seconds==120);
+    ui.value=120; ui_event(KEY_HOLD,now); assert(ui.page==UI_MENU);
+    open_item(MENU_RATE,now); ui.value=100; ui_event(KEY_HOLD,now);
+    assert(saved_config.display_interval_ms==100 && display_interval_ms==100);
+    open_item(MENU_STABLE,now); ui.value=1000000; ui_event(KEY_HOLD,now);
+    assert(saved_config.stable_counts==1000000 && ui.page==UI_MENU);
+    open_item(MENU_STABLE,now); ui.value=64; ui_event(KEY_HOLD,now);
+    open_item(MENU_ID,now); ui.value=123; ui_event(KEY_HOLD,now);
+    assert(strcmp(saved_config.device_id,"SCALE-000123")==0);
+    open_item(MENU_DATE,now); ui.value=2024; ui_event(KEY_HOLD,now);
+    assert(ui.edit_kind==EDIT_MONTH); ui.value=2; ui_event(KEY_HOLD,now);
+    ui.value=29; ui_event(KEY_HOLD,now); assert(saved_config.calibration_date==20240229);
+    assert(!ui_date_valid(2026,2,29) && ui_date_valid(2000,2,29) && !ui_date_valid(2100,2,29));
+    open_item(MENU_DATE,now); ui.value=2026; ui_event(KEY_HOLD,now); ui.value=2; ui_event(KEY_HOLD,now);
+    ui.value=29; ui_event(KEY_HOLD,now); assert(ui.page==UI_EDIT && saved_config.calibration_date==20240229);
+    ui_event(KEY_MENU,now);
+    open_item(MENU_UNIT,now); unsigned unit=saved_config.unit;
+    ui_event(KEY_TAP,now); flash_write_bytes=24; ui_event(KEY_HOLD,now);
+    assert(saved_config.unit==unit && ui.page==UI_CHOICE);
+    flash_write_bytes=128; ui_event(KEY_HOLD,now); assert(saved_config.unit!=(uint32_t)unit);
+    assert(scale_config_load(&recovered) && memcmp(&recovered,&saved_config,sizeof(recovered))==0);
+
+    /* 数字编辑：短按当前位加一、双击移位、长按取消，普通返回不会保存草稿。 */
+    open_item(MENU_ID,now); ui.value=99;
+    ui_event(KEY_TAP,now); assert(ui.value==90);
+    ui_event(KEY_DOUBLE,now); assert(ui.cursor==1);
+    ui_event(KEY_TAP,now); assert(ui.value==0);
+    ui_event(KEY_MENU,now); assert(strcmp(saved_config.device_id,"SCALE-000123")==0);
+    open_item(MENU_BUZZER,now); ui.choice=BUZZER_ACTIVE; ui_event(KEY_HOLD,now);
+    buzzer_start(3,now);
+    for (unsigned i=0;i<3;++i) {
+        buzzer_poll(now+=BUZZER_ON_MS); assert(!buzzer_on);
+        if(i<2){buzzer_poll(now+=BUZZER_GAP_MS); assert(buzzer_on);}
     }
-    assert(!sleeping && zero_counts == zero_before);
-    settle(100000, &now);
-    idle_since_ms = now;
-    power_poll(now);
-    for (unsigned i = 0; i < 1199; ++i) {
-        now += 100U;
-        sample_add(100000, now);
-        power_poll(now);
-    }
+    assert(buzzer_remaining==0 && !(host_gpio_a.ODR & BUZZER_PIN));
+    open_item(MENU_BUZZER,now); ui.choice=BUZZER_OFF; ui_event(KEY_HOLD,now);
+
+    /* 0.5g 真实小负载连续130秒不被零点跟踪吞掉、不触发待机。 */
+    ui.page=UI_WEIGH; settle(99500,&now); int32_t old_zero=zero_counts;
+    for(unsigned i=0;i<1300;++i){now+=100;sample_add(99500,now);power_poll(now);}
+    assert(!sleeping && zero_counts==old_zero);
+    settle(100000,&now); idle_since_ms=now; power_poll(now);
+    for(unsigned i=0;i<1199;++i){now+=100;sample_add(100000,now);power_poll(now);}
     assert(!sleeping);
-    now += 100U;
-    sample_add(100000, now);
-    power_poll(now);
-    assert(sleeping && (host_gpio_a.ODR & HX711_CLOCK_PIN));
-    assert(strstr(weight_report(now), ",,0,,-1,SLEEP\r\n") != NULL);
-    assert(strstr(uart_request("STATUS\r\n", ++now), "S,READY=0") != NULL);
-    assert(!sleeping && !hx711_started && !(host_gpio_a.ODR & HX711_CLOCK_PIN));
-    assert(strcmp(uart_request("\r\n", now), "") == 0);
-    assert(strcmp(uart_request("TARE,xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n", now),
-                  "ERR,COMMAND\r\n") == 0);
-    assert(strcmp(uart_request("ZERO\x01\n", now), "ERR,COMMAND\r\n") == 0);
-    USART1->SR = USART_SR_ORE;
-    USART1->DR = 'Z';
-    uart_poll(now);
-    assert(strcmp(uart_request("ERO\n", now), "ERR,COMMAND\r\n") == 0);
-    assert(strcmp(uart_request("RATE 100\n", now), "OK,RATE\r\n") == 0);
-    assert(strstr(uart_request("HELP\n", now), "TARE[,seq]") != NULL);
-    /* 从最大序号回绕到 0 仍算新请求，相同序号继续只返回原应答。 */
-    tare_sequence_seen = false;
-    settle(100000, &now);
-    command("TARE,4294967295", "ACK,TARE,4294967295\r\n", now);
-    settle(100000, &now);
-    command("TARE,0", "ACK,TARE,0\r\n", now);
-    command("TARE,0", "ACK,TARE,0\r\n", now);
-    command("TARE,4294967296", "ERR,TARE,?,BAD_SEQ\r\n", now);
+    now+=100;sample_add(100000,now);power_poll(now);
+    assert(sleeping && !enabled && (host_gpio_a.ODR & HX711_CLOCK_PIN));
+    key_time(true,100,100000,&now); key_time(false,400,100000,&now);
+    assert(!sleeping && enabled && tare_counts==0 && ui.page==UI_WEIGH);
 
-    /* 超时后停止正常帧，恢复时先重建窗口。 */
-    settle(100000, &now);
-    host_gpio_a.IDR = HX711_DATA_PIN;
-    sample_poll(now + HX711_TIMEOUT_MS);
-    weight_update(now + HX711_TIMEOUT_MS);
-    assert(weight_state.status == WEIGHT_SENSOR_ERROR && !stable);
-    now += HX711_TIMEOUT_MS;
-    settle(100000, &now);
-    assert(weight_state.status == WEIGHT_OK);
-    adc_saturated = true;
-    assert(strstr(weight_report(now), ",,0,,-1,ERR\r\n") != NULL);
-    sample_reset();
-    now = UINT32_MAX - 1000U;
-    settle(100000, &now);
-    assert(!adc_saturated && weight_state.status == WEIGHT_OK);
+    /* LCD: g/kg 小数位置、负号与溢出显示，以及菜单标题、空白和自检。 */
+    lcd_weight(500,true,true,false); assert((frame[10+1] & 8U)!=0); /* 0.0005kg */
+    lcd_weight(500,false,true,true); assert((frame[18+1] & 8U)!=0); /* 0.5g */
+    lcd_number("g",-1234,1); assert(frame[10]==2U && frame[11]==0U); /* 第二位负号 */
+    lcd_number("g",1000000,0); for(unsigned i=0;i<6;++i){static const unsigned a[]={8,10,12,16,18,20};assert(frame[a[i]]==2U && frame[a[i]+1]==0U);}
+    lcd_text("", "ZERO",0); assert(frame[8]!=0);
+    lcd_test_all(); for(unsigned i=0;i<32;++i){assert(frame[i]==15);}
+    lcd_clear(); for(unsigned i=0;i<32;++i){assert(frame[i]==0);}
 
-    /* 10SPS 下持续阶跃重新判稳的算法延迟应不超过 1.5s。 */
-    uint32_t step_at = now;
-    do {
-        now += 100U;
-        sample_add(99000, now); /* 新增加 1g。 */
-    } while (stable && now - step_at < 500U);
+    /* 超时、恢复和 tick 回绕；持续阶跃恢复稳定的模拟延迟。 */
+    settle(100000,&now); host_gpio_a.IDR=HX711_DATA_PIN;
+    sample_poll(now+HX711_TIMEOUT_MS); now+=HX711_TIMEOUT_MS; weight_update(now);
+    assert(weight_state.status==WEIGHT_SENSOR_ERROR && !stable);
+    settle(100000,&now); assert(weight_state.status==WEIGHT_OK);
+    sample_reset();now=UINT32_MAX-1000U;settle(100000,&now);
+    uint32_t step_at=now;
+    do { now+=100;sample_add(99000,now); } while(stable && now-step_at<500U);
     assert(!stable);
-    while (!stable && now - step_at < 2000U) {
-        now += 100U;
-        sample_add(99000, now);
-    }
-    assert(stable && now - step_at <= 1500U);
-    buzzer_mode = BUZZER_ACTIVE;
-    buzzer_remaining = 0;
-    assert(strcmp(uart_request("TARE,0\n", now), "ACK,TARE,0\r\n") == 0);
-    assert(buzzer_remaining == 0); /* 重传已应答的去皮序号不再次发声。 */
-    assert(strcmp(uart_request("RATE 201\n", now), "ERR,RATE_100_TO_200_MS\r\n") == 0);
-    assert(buzzer_remaining == 3);
-    assert(strcmp(uart_request("RATE 100\n", now), "OK,RATE\r\n") == 0);
-    assert(buzzer_remaining == 1);
-    printf("PASS: 3-point calibration, 0.5g preservation, segmented rounding, gross limit/OL,\n");
-    printf("      sequenced TARE dedup, UART framing, persistent config and all partial-page cutoffs,\n");
-    printf("      120s standby/wake, timeout/recovery, tick wrap. Simulated settling %lu ms.\n",
-           (unsigned long)(now - step_at));
+    while(!stable && now-step_at<2000U){now+=100;sample_add(99000,now);}
+    assert(stable && now-step_at<=1500U);
+    /* 正方向也可完成一/二/三点标定。 */
+    local_calibration(&now,1,1); local_calibration(&now,1,2); local_calibration(&now,1,3);
+    open_item(MENU_CLEAR,now); assert(saved_config.point_count==3);
+    ui_event(KEY_DOUBLE,now); assert(saved_config.point_count==3);
+    open_item(MENU_CLEAR,now);ui_event(KEY_HOLD,now);
+    assert(saved_config.point_count==0 && reference_grams==0 && ui.page==UI_WEIGH);
+    printf("PASS: physical key debounce/double/long/wake; local menus and atomic 1/2/3-point calibration;\n");
+    printf("      LCD digits/decimal/sign; persistent settings and V1 migration; all partial-page cutoffs;\n");
+    printf("      small-load preservation, gross overload, negative net, standby, recovery and tick wrap.\n");
     return 0;
 }

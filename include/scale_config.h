@@ -13,9 +13,10 @@ typedef struct {
     uint32_t stable_counts;
     uint32_t auto_off_seconds;
     uint32_t buzzer_mode;
-    uint32_t unit;               /* 0 为 g，1 为 kg。蓝牙重量帧统一以 g 传输。 */
+    uint32_t unit;               /* 0 为 g，1 为 kg；由板上按键切换。 */
     uint32_t calibration_date;   /* YYYYMMDD，0 表示尚未录入。 */
     char device_id[16];
+    uint32_t display_interval_ms; /* 段码屏刷新周期，100～200ms。 */
 } ScaleConfig;
 
 void scale_config_defaults(ScaleConfig *config);

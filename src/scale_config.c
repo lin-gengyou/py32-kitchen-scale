@@ -1,5 +1,6 @@
 /* 两页轮换保存。新页完成写入并通过版本、字段与 CRC 校验后才成为有效记录。 */
 #include "scale_config.h"
+#include "firmware_version.h"
 #include "py32f0xx_hal.h"
 
 #include <stddef.h>
@@ -11,8 +12,8 @@
 #endif
 #define CONFIG_PAGE_SIZE 128U
 #define CONFIG_MAGIC 0x53434C35U
-#define CONFIG_VERSION 1U
-#define FIRMWARE_VERSION 0x00010002U
+#define CONFIG_VERSION 2U
+#define FIRMWARE_VERSION SCALE_FIRMWARE_VERSION_CODE
 
 typedef struct {
     uint32_t magic;
@@ -45,13 +46,15 @@ void scale_config_defaults(ScaleConfig *config)
     memset(config, 0, sizeof(*config));
     config->stable_counts = 64;
     config->auto_off_seconds = 120;
+    config->display_interval_ms = 200;
     strcpy(config->device_id, "UNSET");
 }
 
 /* CRC 校验之外检查物理范围与标定单调性，避免非法系数进入除法换算。 */
 bool scale_config_valid(const ScaleConfig *config)
 {
-    if (config->point_count > 3U || config->stable_counts == 0U ||
+    if (config->display_interval_ms < 100U || config->display_interval_ms > 200U ||
+        config->point_count > 3U || config->stable_counts == 0U ||
         config->stable_counts > 1000000U || config->auto_off_seconds > 86400U ||
         config->buzzer_mode > 2U || config->unit > 1U ||
         config->zero_counts < -8388608 || config->zero_counts > 8388607 ||
@@ -73,13 +76,30 @@ bool scale_config_valid(const ScaleConfig *config)
     return true;
 }
 
-/* 记录只有在版本、CRC 和字段同时有效时才参与新旧选择。 */
-static bool record_valid(const ConfigRecord *record)
+/* V1 的字段前缀原样保留：升级后恢复旧标定，并给新增刷新周期填 200ms。 */
+static bool record_read(const ConfigRecord *record, ScaleConfig *result)
 {
-    return record->magic == CONFIG_MAGIC && record->version == CONFIG_VERSION &&
-           record->crc == config_crc(record, offsetof(ConfigRecord, crc)) &&
-           scale_config_valid(&record->config);
+    if (record->magic != CONFIG_MAGIC) { return false; }
+    ScaleConfig candidate;
+    if (record->version == 1U) {
+        const size_t prefix = offsetof(ScaleConfig, display_interval_ms);
+        const size_t length = offsetof(ConfigRecord, config) + prefix;
+        uint32_t stored_crc;
+        memcpy(&stored_crc, (const uint8_t *)record + length, sizeof(stored_crc));
+        if (stored_crc != config_crc(record, length)) { return false; }
+        memset(&candidate, 0, sizeof(candidate));
+        memcpy(&candidate, &record->config, prefix);
+        candidate.display_interval_ms = 200;
+    } else if (record->version == CONFIG_VERSION &&
+               record->crc == config_crc(record, offsetof(ConfigRecord, crc))) {
+        candidate = record->config;
+    } else { return false; }
+    if (!scale_config_valid(&candidate)) { return false; }
+    if (result != NULL) { *result = candidate; }
+    return true;
 }
+
+static bool record_valid(const ConfigRecord *record) { return record_read(record, NULL); }
 
 /* 返回最新有效页编号，-1 表示两页均无有效记录。代数比较支持序号回绕。 */
 static int current_slot(void)
@@ -104,8 +124,7 @@ bool scale_config_load(ScaleConfig *config)
         return false;
     }
     const ConfigRecord *record = (const ConfigRecord *)(SCALE_CONFIG_BASE + (unsigned)slot * CONFIG_PAGE_SIZE);
-    *config = record->config;
-    return true;
+    return record_read(record, config);
 }
 
 /* 先擦写备用页，始终保留当前有效页。重复保存相同配置时跳过擦写。 */
@@ -118,7 +137,8 @@ bool scale_config_save(const ScaleConfig *config)
     uint32_t generation = 1;
     if (active >= 0) {
         const ConfigRecord *old = (const ConfigRecord *)(SCALE_CONFIG_BASE + (unsigned)active * CONFIG_PAGE_SIZE);
-        if (memcmp(&old->config, config, sizeof(*config)) == 0) {
+        ScaleConfig restored;
+        if (record_read(old, &restored) && memcmp(&restored, config, sizeof(*config)) == 0) {
             return true;
         }
         generation = old->generation + 1U;

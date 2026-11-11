@@ -9,10 +9,10 @@ import shutil
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="v1.0.2")
+    parser.add_argument("--version", default="v1.1.0")
     args = parser.parse_args()
     if not re.fullmatch(r"v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*", args.version):
-        parser.error("版本示例：v1.0.2")
+        parser.error("版本示例：v1.1.0")
     root = Path(__file__).resolve().parents[1]
     pairs = {"blink": "scale_py32f002a", "scale_basic": "scale_basic"}
     source = {name + "." + extension:
@@ -22,6 +22,10 @@ def main():
         if not path.is_file():
             parser.error("先构建两个目标：pio run -e scale_py32f002a -e scale_basic")
     version = args.version if args.version.startswith("v") else "v" + args.version
+    declared = re.search(r'#define SCALE_FIRMWARE_VERSION "([^"]+)"',
+                         (root / "include/firmware_version.h").read_text(encoding="utf-8")).group(1)
+    if version != "v" + declared:
+        parser.error("发布版本须与 include/firmware_version.h 一致：v" + declared)
     dest = root / "firmware" / version
     dest.mkdir(parents=True, exist_ok=True)
     hashes = []
@@ -32,7 +36,7 @@ def main():
     files = [p for folder in ("src", "include", "boards", "ldscripts", "tools")
              for p in (root / folder).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
     files.extend([root / "platformio.ini", root / "pyocd.yaml"])
-    manifest = {"version": version, "protocol": 2, "source_sha256": {
+    manifest = {"version": version, "interface": "SW4 + HT1621B segmented LCD", "serial_enabled": False, "source_sha256": {
         p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)
     }}
     (dest / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

@@ -1,4 +1,4 @@
-"""用本机 GCC 编译并运行固件的 HAL / UART / Flash 模拟检查。"""
+"""用本机 GCC 编译并运行固件的 按键 / LCD / 称重 / Flash 模拟检查。"""
 import argparse
 import os
 from pathlib import Path

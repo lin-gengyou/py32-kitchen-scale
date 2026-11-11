@@ -7,18 +7,21 @@
 typedef struct { volatile uint32_t IDR, BSRR, ODR; } GPIO_TypeDef;
 typedef struct { volatile uint32_t SR, DR, CR1, CR2, CR3, BRR; } USART_TypeDef;
 typedef struct { uint32_t Mode, Pull, Speed, Pin, Alternate; } GPIO_InitTypeDef;
-extern GPIO_TypeDef host_gpio_a, host_gpio_b;
+extern GPIO_TypeDef host_gpio_a, host_gpio_b, host_gpio_f;
 extern USART_TypeDef host_usart;
 extern bool host_dbg_clock_enabled, host_iwdg_frozen;
 #define GPIOA (&host_gpio_a)
 #define GPIOB (&host_gpio_b)
+#define GPIOF (&host_gpio_f)
 #define USART1 (&host_usart)
 #define GPIO_PIN_0 1U
 #define GPIO_PIN_1 2U
 #define GPIO_PIN_2 4U
 #define GPIO_PIN_3 8U
 #define GPIO_PIN_4 16U
+#define GPIO_PIN_5 32U
 #define GPIO_PIN_6 64U
+#define GPIO_PIN_7 128U
 #define GPIO_PIN_SET 1U
 #define GPIO_PIN_RESET 0U
 #define GPIO_MODE_OUTPUT_PP 1U
@@ -39,6 +42,7 @@ extern bool host_dbg_clock_enabled, host_iwdg_frozen;
 #define USART_SR_TXE 128U
 #define __HAL_RCC_GPIOA_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_GPIOB_CLK_ENABLE() ((void)0)
+#define __HAL_RCC_GPIOF_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_USART1_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_DBGMCU_CLK_ENABLE() (host_dbg_clock_enabled = true)
 #define __NOP() ((void)0)
