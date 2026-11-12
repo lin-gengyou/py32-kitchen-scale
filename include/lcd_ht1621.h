@@ -12,6 +12,8 @@ void lcd_number(const char *title, int32_t value, unsigned decimals);
 void lcd_weight(int32_t milligrams, bool kilograms, bool stable, bool tare);
 void lcd_test_all(void);
 void lcd_flush(void);
+bool lcd_verify_ram(void); /* 读取控制器本体并与发送帧比较。 */
+unsigned lcd_ram_result(void); /* 0一致、1不一致、2尚未读取。 */
 
 #ifdef SCALE_HOST_TEST
 const uint8_t *lcd_test_frame(void);

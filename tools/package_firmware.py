@@ -9,10 +9,10 @@ import shutil
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="v1.1.0")
+    parser.add_argument("--version", default="v1.1.1")
     args = parser.parse_args()
     if not re.fullmatch(r"v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*", args.version):
-        parser.error("版本示例：v1.1.0")
+        parser.error("版本示例：v1.1.1")
     root = Path(__file__).resolve().parents[1]
     pairs = {"blink": "scale_py32f002a", "scale_basic": "scale_basic"}
     source = {name + "." + extension:

@@ -11,6 +11,11 @@ static uint8_t frame[32];
 static uint8_t sent[32];
 static bool enabled;
 
+/* 仅保存最近一次实物读回，供调试器读取；不是发送缓存。 */
+volatile uint8_t lcd_ram_readback[32];
+volatile uint32_t lcd_ram_mismatch;
+volatile uint8_t lcd_ram_checked;
+
 static void edge_delay(void)
 {
     for (volatile unsigned i = 0; i < 8; ++i) { __NOP(); }
@@ -70,6 +75,7 @@ void lcd_init(void)
     command(0x01);
     memset(frame, 0, sizeof(frame));
     memset(sent, 0xff, sizeof(sent));
+    lcd_ram_checked = 0;
     enabled = true;
     lcd_flush();
     command(0x03);
@@ -127,8 +133,8 @@ static void digit(unsigned position, char c, bool dot)
         unsigned address = position * 2U;
         frame[address] = ((g >> 3) & 1U) | (((g >> 4) & 1U) << 1) |
             (((g >> 6) & 1U) << 2) | (((g >> 5) & 1U) << 3);
-        /* 玻璃第8脚在本板接 HT1621 SEG22，不能按连续地址 SEG7 写入。 */
-        unsigned second = position == 3U ? 22U : address + 1U;
+        /* 实机逐地址确认：第四位的 A/B/C 在 SEG7，而非旧表的 SEG22。 */
+        unsigned second = address + 1U;
         frame[second] = (position < 3U && dot ? 1U : 0U) |
             (((g >> 2) & 1U) << 1) | (((g >> 1) & 1U) << 2) | ((g & 1U) << 3);
     } else {
@@ -187,6 +193,47 @@ void lcd_weight(int32_t mg, bool kg, bool stable, bool tare)
 }
 
 void lcd_test_all(void) { memset(frame, 0x0f, sizeof(frame)); }
+
+/* 从 HT1621 本体读取32个RAM单元。RD下降沿推出数据，随后上升沿后采样。
+ * 先将PA7切为输入，CS释放后再恢复推挽，避免与HT1621的读输出争用。
+ */
+bool lcd_verify_ram(void)
+{
+    if (!enabled) { lcd_ram_checked = 0; return false; }
+    HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
+    edge_delay();
+    write_msb(6U, 3);                /* 110：读RAM。 */
+    write_msb(0U, 6);                /* 从地址0连续读取。 */
+    GPIO_InitTypeDef pin = {.Pin = GPIO_PIN_7, .Mode = GPIO_MODE_INPUT,
+        .Pull = GPIO_NOPULL, .Speed = GPIO_SPEED_FREQ_LOW};
+    HAL_GPIO_Init(GPIOA, &pin);
+    uint32_t mismatch = 0;
+    for (unsigned address = 0; address < 32; ++address) {
+        unsigned data = 0;
+        for (unsigned bit = 0; bit < 4; ++bit) {
+            HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1, GPIO_PIN_RESET);
+            edge_delay(); edge_delay();
+            HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1, GPIO_PIN_SET);
+            edge_delay(); edge_delay();
+            if ((GPIOA->IDR & GPIO_PIN_7) != 0U) { data |= 1U << bit; }
+        }
+        lcd_ram_readback[address] = (uint8_t)data;
+        if (data != frame[address]) { mismatch |= 1UL << address; }
+    }
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET);
+    edge_delay();
+    pin.Mode = GPIO_MODE_OUTPUT_PP;
+    HAL_GPIO_Init(GPIOA, &pin);
+    lcd_ram_mismatch = mismatch;
+    lcd_ram_checked = 1;
+    return mismatch == 0U;
+}
+
+unsigned lcd_ram_result(void)
+{
+    return lcd_ram_checked ? (lcd_ram_mismatch == 0U ? 0U : 1U) : 2U;
+}
 
 void lcd_flush(void)
 {

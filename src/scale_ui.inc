@@ -282,9 +282,10 @@ static void ui_render(uint32_t now)
         default: lcd_text("", "------", 0); break;
         }
     } else if (ui.page == UI_MENU) {
-        static const char *const labels[] = {"UntArE","UnIt","bEEP","OFF","StAb","rAtE","CAL","rAW",
-            "InFo","Id","dAtE","CLr","tESt","SLEEP","End"};
-        lcd_text("SEt", labels[ui.menu], 0);
+        /* 七段屏用数字编号，避免将长单词拼成难辨认的字形。 */
+        unsigned code = (unsigned)ui.menu + 1U;
+        char title[5] = {' ', ' ', (char)('0' + code / 10U), (char)('0' + code % 10U), 0};
+        lcd_text(title, "", 0);
     } else if (ui.page == UI_CHOICE) {
         static const char *const beep[] = {"OFF","ACt","PASS"};
         lcd_text(ui.menu == MENU_UNIT ? "UnIt" : "bEEP", ui.menu == MENU_UNIT ? (ui.choice ? "kg" : "g") : beep[ui.choice], 0);
@@ -316,9 +317,12 @@ static void ui_render(uint32_t now)
         default: lcd_number("CAL", (int32_t)saved_config.point_count, 0); break;
         }
     } else if (ui.page == UI_TEST) {
-        if (ui.info_page % 3U == 0U) { lcd_test_all(); }
-        else if (ui.info_page % 3U == 1U) { lcd_text("1234", "123456", 0x1f); }
-        else { lcd_clear(); }
+        if (ui.info_page % 4U == 0U) { lcd_test_all(); }
+        else if (ui.info_page % 4U == 1U) { lcd_text("1234", "123456", 0x1f); }
+        else if (ui.info_page % 4U == 2U) { lcd_clear(); }
+        else { lcd_number("1304", (int32_t)lcd_ram_result(), 0); }
     }
     lcd_flush();
+    /* 结果页保留上一幅测试图的核对结果；全亮/数字/空白页实际读回HT1621。 */
+    if (ui.page == UI_TEST && ui.info_page % 4U != 3U) { (void)lcd_verify_ram(); }
 }

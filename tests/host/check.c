@@ -292,6 +292,20 @@ int main(void)
     lcd_text("", "ZERO",0); assert(frame[8]!=0);
     lcd_test_all(); for(unsigned i=0;i<32;++i){assert(frame[i]==15);}
     lcd_clear(); for(unsigned i=0;i<32;++i){assert(frame[i]==0);}
+    /* 逐位回归：上方第四位的4必须使用SEG6/7，SEG22不能被写入。
+     * 读回测试用GPIO输入固定低/高模拟失败与匹配，防止把发送缓存误当成器件RAM。
+     */
+    lcd_text("   4", "", 0); assert(frame[6]==12 && frame[7]==6 && frame[22]==0);
+    host_gpio_a.IDR = 0; assert(!lcd_verify_ram() && lcd_ram_checked==1);
+    assert(lcd_ram_mismatch==((1UL<<6)|(1UL<<7)));
+    lcd_clear(); assert(lcd_verify_ram() && lcd_ram_mismatch==0);
+    host_gpio_a.IDR=GPIO_PIN_7; lcd_test_all(); assert(lcd_verify_ram());
+    for(unsigned i=0;i<32;++i){assert(lcd_ram_readback[i]==15);}
+    /* 菜单按产品编号显示：第7项必须在上方为07，数值区留空。 */
+    ui.startup_ms=0;ui.message=NULL;ui.page=UI_MENU;ui.menu=MENU_CAL;ui.rendered_ms=0;
+    ui_render(4000);
+    assert(frame[4]==11 && frame[5]==14 && frame[6]==0 && frame[7]==14);
+    for(unsigned i=8;i<32;++i){assert(frame[i]==0);}
 
     /* 超时、恢复和 tick 回绕；持续阶跃恢复稳定的模拟延迟。 */
     settle(100000,&now); host_gpio_a.IDR=HX711_DATA_PIN;
