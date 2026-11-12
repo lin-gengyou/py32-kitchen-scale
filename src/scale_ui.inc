@@ -126,7 +126,7 @@ static void ui_begin_item(uint32_t now)
     case MENU_OFF: ui_edit(EDIT_OFF, saved_config.auto_off_seconds, 0, 86400); break;
     case MENU_STABLE: ui_edit(EDIT_STABLE, saved_config.stable_counts, 1, 1000000); break;
     case MENU_RATE: ui_edit(EDIT_RATE, display_interval_ms, 100, 200); break;
-    case MENU_CAL: ui.page = UI_CAL_COUNT; ui.cal_count = 3; break;
+    case MENU_CAL: ui.page = UI_CAL_COUNT; ui.cal_count = 1; break;
     case MENU_RAW: ui.page = UI_RAW; ui.info_page = 0; break;
     case MENU_INFO: ui.page = UI_INFO; ui.info_page = 0; break;
     case MENU_ID: ui_edit(EDIT_ID, ui_device_number(), 0, 999999); break;
@@ -143,7 +143,7 @@ static void ui_begin_item(uint32_t now)
 static void ui_cal_next_mass(void)
 {
     static const uint16_t defaults[] = {500,2500,5000};
-    ui_edit(EDIT_MASS, ui.cal_count == 1U ? 1000U : defaults[ui.cal_index], 1, 5000);
+    ui_edit(EDIT_MASS, ui.cal_count == 1U ? 20U : defaults[ui.cal_index], 1, 5000);
 }
 
 static void ui_cal_sample(uint32_t now)
@@ -295,7 +295,16 @@ static void ui_render(uint32_t now)
         uint32_t part = ui.value / power10(low);
         char text[7] = "000000";
         for (unsigned i = 0; i < 6; ++i) { text[5U - i] = (char)('0' + part % 10U); part /= 10U; }
-        if (now / 300U % 2U == 0U) { text[5U - (ui.cursor - low)] = ' '; }
+        /* 砝码质量按实际位数显示；空白前导位不占据已知缺段的第三位。
+         * 被选中的高位仍显示0，保留双击移位编辑的能力。
+         */
+        unsigned selected = 5U - (ui.cursor - low);
+        if (ui.edit_kind == EDIT_MASS) {
+            for (unsigned i = 0; i < 5U && text[i] == '0'; ++i) {
+                if (i != selected) { text[i] = ' '; }
+            }
+        }
+        if (now / 300U % 2U == 0U) { text[selected] = ' '; }
         lcd_text(titles[ui.edit_kind], text, 0);
     } else if (ui.page == UI_CAL_COUNT) { lcd_number("CAL", (int32_t)ui.cal_count, 0); }
     else if (ui.page == UI_CAL_EMPTY) { lcd_text(stable && samples_ready(now) ? "S" : "", "ZERO", 0); }

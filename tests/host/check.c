@@ -320,6 +320,22 @@ int main(void)
     assert(stable && now-step_at<=1500U);
     /* 正方向也可完成一/二/三点标定。 */
     local_calibration(&now,1,1); local_calibration(&now,1,2); local_calibration(&now,1,3);
+    /* 手头最大砝码为20g：完整走默认单点向导，不直接改标定数组。
+     * 20g只是标定点，量程仍为5000g；小质量输入不显示前导零。
+     */
+    open_item(MENU_CAL,now); assert(ui.cal_count==1);
+    ui_event(KEY_HOLD,now); settle(100000,&now); ui_event(KEY_HOLD,now);
+    assert(ui.page==UI_EDIT && ui.edit_kind==EDIT_MASS && ui.value==20);
+    ui.startup_ms=now-4000U; ui.message=NULL; ui.rendered_ms=now-200U;
+    ui_render(now); assert(frame[12]==0 && frame[13]==0); /* 第三位为空 */
+    ui_event(KEY_HOLD,now); settle(120000,&now); ui_event(KEY_HOLD,now);
+    assert(ui.page==UI_WEIGH && saved_config.point_count==1 && saved_config.grams[0]==20);
+    assert(saved_config.spans[0]==20000 && reference_grams==20 && MAX_GROSS_GRAMS==5000);
+    assert(scale_config_load(&recovered) && recovered.grams[0]==20);
+    settle(100000,&now); assert(weight_state.display_mg==0);
+    settle(120000,&now); assert(weight_state.display_mg==20000);
+    settle(5101000,&now); assert(weight_state.status==WEIGHT_RANGE); /* 5001g仍超范围 */
+    local_calibration(&now,1,3);
     open_item(MENU_CLEAR,now); assert(saved_config.point_count==3);
     ui_event(KEY_DOUBLE,now); assert(saved_config.point_count==3);
     open_item(MENU_CLEAR,now);ui_event(KEY_HOLD,now);
