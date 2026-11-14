@@ -126,7 +126,7 @@ static void ui_begin_item(uint32_t now)
     case MENU_UNIT: ui.page = UI_CHOICE; ui.choice = saved_config.unit; break;
     case MENU_BUZZER: ui.page = UI_CHOICE; ui.choice = saved_config.buzzer_mode; break;
     case MENU_OFF: ui_edit(EDIT_OFF, saved_config.auto_off_seconds, 0, 86400); break;
-    case MENU_STABLE: ui_edit(EDIT_STABLE, saved_config.stable_counts, 1, 1000000); break;
+    case MENU_STABLE: ui_edit(EDIT_STABLE, saved_config.stable_counts, 0, 1000000); break;
     case MENU_RATE: ui_edit(EDIT_RATE, display_interval_ms, 100, 200); break;
     case MENU_CAL: ui.page = UI_CAL_COUNT; ui.cal_count = 1; break;
     case MENU_RAW: ui.page = UI_RAW; ui.info_page = 0; break;

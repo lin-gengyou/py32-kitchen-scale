@@ -137,6 +137,7 @@ static void local_calibration(uint32_t *now, int direction, unsigned points)
 }
 
 #include "completion.inc"
+#include "stability.inc"
 
 int main(void)
 {
@@ -147,14 +148,14 @@ int main(void)
     /* 用旧布局构造真实 V1 记录，验证刷新周期字段升级不会丢失旧标定。 */
     ScaleConfig legacy;
     scale_config_defaults(&legacy);
-    legacy.zero_counts = 12345; legacy.spans[0] = -500000; legacy.grams[0] = 500; legacy.point_count = 1;
+    legacy.stable_counts = 64; legacy.zero_counts = 12345; legacy.spans[0] = -500000; legacy.grams[0] = 500; legacy.point_count = 1;
     ConfigRecord v1 = {.magic=CONFIG_MAGIC,.version=1,.generation=7,.firmware_version=0x10002,.config=legacy};
     const size_t old_length = offsetof(ConfigRecord, config) + offsetof(ScaleConfig, display_interval_ms);
     uint32_t crc = config_crc(&v1, old_length);
     memcpy(host_flash, &v1, old_length); memcpy((uint8_t *)host_flash + old_length, &crc, 4);
     ScaleConfig recovered;
     assert(scale_config_load(&recovered) && recovered.zero_counts == 12345);
-    assert(recovered.display_interval_ms == 200 && recovered.point_count == 1);
+    assert(recovered.display_interval_ms == 200 && recovered.point_count == 1 && recovered.stable_counts==0);
     recovered.display_interval_ms = 100;
     assert(scale_config_save(&recovered) && scale_config_load(&recovered));
     assert(recovered.point_count == 1 && recovered.display_interval_ms == 100);
@@ -345,6 +346,7 @@ int main(void)
     ui_event(KEY_DOUBLE,now); assert(saved_config.point_count==3);
     open_item(MENU_CLEAR,now);ui_event(KEY_HOLD,now);
     assert(saved_config.point_count==0 && reference_grams==0 && ui.page==UI_WEIGH);
+    stability_checks();
     completion_checks();
     printf("PASS: physical key debounce/double/long/wake; local menus and atomic 1/2/3-point calibration;\n");
     printf("      LCD digits/decimal/sign; persistent settings and V1 migration; all partial-page cutoffs;\n");

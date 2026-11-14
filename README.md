@@ -1,6 +1,6 @@
 # 5kg 厨房电子秤 · PY32F002A
 
-**v2.0.0：SW4独立操作、HT1621B段码LCD、ECB01C蓝牙。** 默认外部供电、单点20g标定、空秤稳定无操作120秒软件待机。21项菜单在板上完成称重、去皮归零、标定和所有设备设置；配套浏览器客户端查看重量并远程去皮。
+**v2.0.1：SW4独立操作、HT1621B段码LCD、ECB01C蓝牙。** 默认外部供电、单点20g标定、空秤稳定无操作120秒软件待机。21项菜单在板上完成称重、去皮归零、标定和所有设备设置；配套浏览器客户端查看重量并远程去皮。
 
 开发环境：**VS Code + PlatformIO + C / 普冉HAL**。仓库包含源码、板型、链接脚本、固定依赖、下载脚本、原理图、需求文档、操作指南、蓝牙客户端和固件。
 
@@ -22,13 +22,13 @@
 
 ## 功能
 
-- HX711 A/128，3点中值、动态3点/稳定8点平均，持续500ms判稳。
+- HX711 A/128，3点中值、动态3点/稳定8点平均，按标定换算0.2g门限、持续500ms判稳，退出滞回与慢漂锚点。
 - 5000g容量、5250g超载；按毛重保护，负净重、0.5g小负载保留；0.1/0.5/1g分段分度。
 - 稳定去皮、空秤归零、清皮、g/kg，1～3点正负方向标定；默认1点20g，最后一点整体保存。
 - 21项菜单：提示音、待机、判稳、刷新、ID/日期、原始计数、屏幕全段/RAM自检、电源、电压、Vref、缺段绕行、蓝牙、恢复默认。
 - 外部电源默认电量未知；可选锂电/碱性/镍氢，电压估算百分比、低电滞回、ADC错误重试、待机关闭ADC。
 - 成功1声、错误3声；静音/有源/无源500Hz；约4秒IWDG与调试暂停冻结。
-- V3双页CRC参数，V1/V2标定迁移，写入验证、坏页回退、相同设置免写。
+- V4双页CRC参数，V1/V2/V3标定迁移，写入验证、坏页回退、相同设置免写。
 - BLE 5～10Hz重量、带序号去皮与成功/失败去重、心跳、状态同步、唤醒。
 - 浏览器客户端：实时重量、稳定/皮重/电源/故障、单位转换、去皮、唤醒、分包解析、超时重试、断线重连。
 
@@ -84,7 +84,7 @@ pio run -e scale_basic -t upload
 pio run -e scale_basic_jlink -t upload
 ```
 
-也可在PlatformIO → Project Tasks → 对应环境点Build/Upload。下载使用Puya DFP、100kHz SWD、扇区擦除，保留独立配置区。完成后复位运行，LCD先自检再显示2.0.0。
+也可在PlatformIO → Project Tasks → 对应环境点Build/Upload。下载使用Puya DFP、100kHz SWD、扇区擦除，保留独立配置区。完成后复位运行，LCD先自检再显示2.0.1。
 
 ## 3. 20g标定与第一次称重
 
@@ -116,11 +116,11 @@ git pull --ff-only
 pio run -e scale_basic -t upload
 ```
 
-当前文件：[firmware/v2.0.0](firmware/v2.0.0)，对应[GitHub Release](https://github.com/lin-gengyou/py32-kitchen-scale/releases/tag/v2.0.0)。
+当前文件：[firmware/v2.0.1](firmware/v2.0.1)，对应[GitHub Release](https://github.com/lin-gengyou/py32-kitchen-scale/releases/tag/v2.0.1)。
 
 - scale_basic.hex / .elf包含地址；scale_basic.bin起始地址0x08000000。
 - blink.*为点灯诊断；SHA256SUMS核对固件，manifest.json核对源码。
-- 旧版本与1.0.2 PDF保留为历史快照，当前操作使用v2.0.0指南。
+- 旧版本与1.0.2 PDF保留为历史快照，当前操作使用v2.0.1指南。
 
 ## 6. 彩屏怎么用
 
@@ -143,7 +143,7 @@ pio run -e scale_basic -t upload
 python tools/run_host_checks.py
 node --test tests/web/protocol.test.mjs
 pio run -e scale_py32f002a -e scale_basic -e scale_py32f002a_jlink -e scale_basic_jlink
-python tools/package_firmware.py --version v2.0.0
+python tools/package_firmware.py --version v2.0.1
 ```
 
 Windows主机检查可加 `--cc C:/msys64/ucrt64/bin/gcc.exe`。已覆盖合成8小时蓝牙/24小时称重调度；整机精度、偏载、漂移与无线长测按[需求对照](REQUIREMENTS.md)逐项测量。20g单点完成当前校准流程，大量程精度使用对应质量标准砝码检验。

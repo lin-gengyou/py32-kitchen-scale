@@ -12,7 +12,7 @@
 #endif
 #define CONFIG_PAGE_SIZE 128U
 #define CONFIG_MAGIC 0x53434C35U
-#define CONFIG_VERSION 3U
+#define CONFIG_VERSION 4U
 #define FIRMWARE_VERSION SCALE_FIRMWARE_VERSION_CODE
 
 typedef struct {
@@ -44,7 +44,7 @@ static uint32_t config_crc(const void *data, size_t length)
 void scale_config_defaults(ScaleConfig *config)
 {
     memset(config, 0, sizeof(*config));
-    config->stable_counts = 64;
+    config->stable_counts = 0;
     config->auto_off_seconds = 120;
     config->display_interval_ms = 200;
     config->battery_reference_mv = 1200;
@@ -60,7 +60,7 @@ bool scale_config_valid(const ScaleConfig *config)
         config->battery_reference_mv > 1400U || config->bluetooth_enabled > 1U ||
         (config->lcd_missing_mask != 0U && config->lcd_missing_mask != 4U) ||
         config->display_interval_ms < 100U || config->display_interval_ms > 200U ||
-        config->point_count > 3U || config->stable_counts == 0U ||
+        config->point_count > 3U ||
         config->stable_counts > 1000000U || config->auto_off_seconds > 86400U ||
         config->buzzer_mode > 2U || config->unit > 1U ||
         config->zero_counts < -8388608 || config->zero_counts > 8388607 ||
@@ -82,7 +82,7 @@ bool scale_config_valid(const ScaleConfig *config)
     return true;
 }
 
-/* V1/V2字段前缀原样保留，新增电源/显示/蓝牙设置填默认值。 */
+/* V1/V2保留字段前缀，V3保留完整布局；V4用0表示自动判稳。 */
 static bool record_read(const ConfigRecord *record, ScaleConfig *result)
 {
     if (record->magic != CONFIG_MAGIC) { return false; }
@@ -96,10 +96,12 @@ static bool record_read(const ConfigRecord *record, ScaleConfig *result)
         if (stored_crc != config_crc(record, length)) { return false; }
         scale_config_defaults(&candidate);
         memcpy(&candidate, &record->config, prefix);
-    } else if (record->version == CONFIG_VERSION &&
+    } else if ((record->version == 3U || record->version == CONFIG_VERSION) &&
                record->crc == config_crc(record, offsetof(ConfigRecord, crc))) {
         candidate = record->config;
     } else { return false; }
+    /* 旧版默认64计数升级为自动；其余手动阈值完整保留。 */
+    if (record->version < 4U && candidate.stable_counts == 64U) { candidate.stable_counts = 0; }
     if (!scale_config_valid(&candidate)) { return false; }
     if (result != NULL) { *result = candidate; }
     return true;

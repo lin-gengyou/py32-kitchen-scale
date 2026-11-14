@@ -34,7 +34,7 @@ enum {
     HX711_STARTUP_MS = 500,       /* 给上电后的 HX711 留出建立时间。 */
     HX711_TIMEOUT_MS = 1000,      /* 连续 1 秒无有效采样即报告故障。 */
     STABLE_HOLD_MS = 500,         /* 整个窗口持续满足阈值 500ms 才算稳定。 */
-    DEFAULT_STABLE_COUNTS = 64,  /* 最近 8 点的最大值与最小值之差。 */
+    DEFAULT_STABLE_COUNTS = 0,   /* 0自动：按标定换算0.2g窗口；正数为手动计数。 */
     DEFAULT_REPORT_MS = 200,       /* 文档要求 5～10Hz，默认选择 5Hz。 */
     MIN_REPORT_MS = 100,
     MAX_REPORT_MS = 200,
@@ -68,6 +68,7 @@ static bool settling;
 static bool stable;
 static uint32_t stable_since_ms;
 static uint32_t stable_counts = DEFAULT_STABLE_COUNTS;
+static int32_t stable_anchor;
 
 /* 运行时空载与去皮偏移。标定的各段计数允许为负，适配输出方向相反的传感器。 */
 static int32_t zero_counts;
@@ -181,7 +182,24 @@ static void sample_reset(void)
     raw_index = 0;
 }
 
-/* 收入一个有效读数，并用完整窗口的峰峰值判断秤台是否持续静止。 */
+/* 自动判稳使用0.2g峰峰值；未标定时以128计数建立第一次标定。
+ * 手动正数仍严格按菜单输入计数；参数0代表自动，避免不同传感器灵敏度改变门限。
+ */
+static uint32_t stability_limit(void)
+{
+    if (stable_counts != 0U) { return stable_counts; }
+    if (saved_config.point_count == 0U) { return 128U; }
+    int64_t span = saved_config.spans[0];
+    if (span < 0) { span = -span; }
+    uint32_t divisor = saved_config.grams[0] * 1000U;
+    uint32_t limit = (uint32_t)((span * 200 + divisor - 1U) / divisor);
+    return limit != 0U ? limit : 1U;
+}
+
+/* 进入稳定需完整8点窗口持续500ms；退出使用2倍峰峰值门限。
+ * 均值相对进入时的锚点移动一个门限也退出，避免缓慢加料一直挂着S。
+ * 数值仍每次采样更新，不锁死重量，不将微小负载吞成零。
+ */
 static void sample_add(int32_t counts, uint32_t now)
 {
     last_sample_ms = now;
@@ -222,7 +240,15 @@ static void sample_add(int32_t counts, uint32_t now)
             maximum = samples[i];
         }
     }
-    if (sample_count < AVERAGE_SAMPLES || (uint32_t)(maximum - minimum) > stable_counts) {
+    uint32_t limit = stability_limit();
+    uint32_t spread = (uint32_t)(maximum - minimum);
+    if (stable) {
+        int32_t shift = sample_sum / AVERAGE_SAMPLES - stable_anchor;
+        if (shift < 0) { shift = -shift; }
+        if (spread <= limit * 2U && (uint32_t)shift <= limit) { return; }
+        settling = false; stable = false; return;
+    }
+    if (sample_count < AVERAGE_SAMPLES || spread > limit) {
         settling = false;
         stable = false;
         return;
@@ -232,6 +258,7 @@ static void sample_add(int32_t counts, uint32_t now)
         stable_since_ms = now;
     }
     stable = (uint32_t)(now - stable_since_ms) >= STABLE_HOLD_MS;
+    if (stable) { stable_anchor = sample_sum / AVERAGE_SAMPLES; }
 }
 
 /* 查询数据就绪脚，有新结果就读取，实际采样速度取决于 HX711 的 RATE 硬件。 */

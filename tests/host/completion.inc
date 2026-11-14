@@ -16,7 +16,7 @@ static void completion_checks(void)
     uint32_t now=10000;
     ScaleConfig previous, migrated;
     scale_config_defaults(&previous);
-    previous.point_count=1; previous.zero_counts=100000;
+    previous.stable_counts=64;previous.point_count=1; previous.zero_counts=100000;
     previous.spans[0]=500000; previous.grams[0]=500; previous.display_interval_ms=100;
     ConfigRecord v2={.magic=CONFIG_MAGIC,.version=2,.generation=25,.config=previous};
     size_t length=offsetof(ConfigRecord,config)+offsetof(ScaleConfig,battery_profile);
@@ -24,6 +24,7 @@ static void completion_checks(void)
     memset(host_flash,0xff,sizeof(host_flash));
     memcpy(host_flash,&v2,length); memcpy((uint8_t *)host_flash+length,&checksum,4);
     assert(scale_config_load(&migrated));
+    assert(migrated.stable_counts==0);
     assert(migrated.point_count==1 && migrated.spans[0]==500000 && migrated.display_interval_ms==100);
     assert(migrated.battery_profile==0 && migrated.lcd_missing_mask==4 && migrated.bluetooth_enabled==1);
     assert(scale_config_save(&migrated) && scale_config_load(&previous));
@@ -137,7 +138,7 @@ static void completion_checks(void)
     open_item(MENU_RESET,now);ui_event(KEY_HOLD,now);
     assert(saved_config.point_count==0 && saved_config.battery_profile==0 &&
         saved_config.battery_reference_mv==1200 && saved_config.lcd_missing_mask==4 && ble_enabled);
-    printf("PASS: V2/V3 migration, ADC power profiles/hysteresis/fault gates, healthy LCD slots;\n");
+    printf("PASS: V2/V3/V4 migration, ADC power profiles/hysteresis/fault gates, healthy LCD slots;\n");
     printf("      BLE fragmentation/duplicate/error/stale/wrap/heartbeat and atomic TX;\n");
     printf("      synthetic 8-hour BLE (288000 frames) and 24-hour weighing (864000 samples).\n");
 }

@@ -10,7 +10,7 @@ typedef struct {
     int32_t spans[3];
     uint32_t grams[3];
     uint32_t point_count;
-    uint32_t stable_counts;
+    uint32_t stable_counts;      /* 0自动0.2g；正数为手动窗口峰峰计数。 */
     uint32_t auto_off_seconds;
     uint32_t buzzer_mode;
     uint32_t unit;               /* 0 为 g，1 为 kg；由板上按键切换。 */
