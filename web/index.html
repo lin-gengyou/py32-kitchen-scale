@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>厨房秤 · 蓝牙称重</title><link rel="stylesheet" href="style.css"></head>
+<body><main>
+<header><div><small>PY32 · KITCHEN SCALE / 2.0</small><h1>每一克，都看得清</h1></div><span id="connection" class="pill">未连接</span></header>
+<section class="scale"><div class="topline"><span id="state">连接你的电子秤</span><span id="power">外部供电 / 电量未知</span></div>
+<div class="reading"><strong id="weight">—</strong><span id="unit">g</span></div>
+<div class="topline"><span id="stability">等待数据</span><span id="tare-info">皮重 —</span></div>
+<div class="actions"><button id="tare" class="primary" aria-label="去皮 / 归零净重" disabled>去皮</button><button id="wake" disabled>唤醒秤</button><select id="units" aria-label="显示单位"><option value="g">克 g</option><option value="kg">千克 kg</option><option value="oz">盎司 oz</option><option value="lb">磅 / 盎司 lb:oz</option></select></div>
+</section>
+<section class="toolbar"><button id="connect" class="primary">连接蓝牙秤</button><button id="disconnect" disabled>断开连接</button><button id="demo">体验演示</button><a href="tft-preview.html">查看彩屏方案 ↗</a></section>
+<p id="message" role="status" aria-live="polite">在 Chrome 或 Edge 打开此页，点击连接，选择名称以 BT_ 开头的秤。</p>
+<details><summary>连接设置与操作说明</summary>
+<p>先在秤上用20g砝码完成标定。放容器，等待“稳定”，点击去皮；移走容器会显示负净重。标定和所有设备设置也可直接用秤上的SW4完成。</p>
+<label>服务 UUID <input id="service" value="fff0"></label><label>通知 UUID <input id="notify" value="fff1"></label><label>写入 UUID <input id="write" value="fff2"></label>
+<p>外部供电的电池百分比显示为未知。断线后页面自动重连并重新订阅；连续3秒没有重量帧时清空旧读数。页面的单位转换只影响本页。</p>
+<p>电脑使用 <code>python -m http.server 8765 --directory web --bind 127.0.0.1</code>，打开 <code>http://localhost:8765</code>。Android平板使用支持Web Bluetooth的Chrome及HTTPS地址；iPad可使用原生BLE客户端连接FFF0服务，协议见仓库文档。</p>
+</details>
+<footer>5kg · 独立按键操作 · ECB01C蓝牙透传 <span id="counter"></span></footer>
+</main><script type="module" src="app.mjs"></script></body></html>

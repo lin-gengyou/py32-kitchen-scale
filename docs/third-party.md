@@ -28,3 +28,10 @@ DFP文件SHA-256：`bf3ddd933f28f4557c90a8070cbc834bd3869ff88e53a8b20d80e79c51f8
 ## v1.1.0显示资料
 
 HT1621时序依据[Holtek原厂手册](https://www.holtek.com/webapi/116711/HT1621_21Gv340.pdf)。GDC0689段名称表参照[WinnerMicro官方SDK](https://github.com/winnermicro/wm_iot_sdk/blob/master/components/driver/src/display/seg_lcd/wm_gdc0689.c)的公开COM/SEG表（Apache-2.0）；本项目自行实现HT1621写接口、字形编码和按本板网络转换的地址表。PCB映射及本机反馈见[lcd-mapping.md](lcd-mapping.md)。
+
+## v2.0.0电压、蓝牙与终端资料
+
+- [普冉PY32F002A参考手册V1.3](https://www.puyasemi.com/download_path/用户手册/MCU%20微处理器/PY32F002A_Reference_Manual_V1.3.pdf)：ADC校准、内部参考和SPI/USART寄存器；固定SDK头文件给出PB1通道9、VREFINT通道12。
+- [易加物联ECB01C技术手册V1.2](https://offer-product.oss-cn-beijing.aliyuncs.com/product/offer/attachment/2215891934535/file/subPdf_561358_264786_20230530-174416186.pdf)：9600/8N1、FFF0/FFF1/FFF2、3分钟下行超时。
+- [Chrome Web Bluetooth官方文档](https://developer.chrome.com/docs/capabilities/bluetooth)：安全上下文、用户选择、通知及重连后重新发现。
+- 客户端为项目自有原生HTML/CSS/JavaScript，无运行时第三方依赖。纯协议检查使用Node内置测试；可选界面回归使用Playwright1.62.1和本机Edge。

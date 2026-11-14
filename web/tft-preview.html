@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>彩屏交互方案</title><link rel="stylesheet" href="style.css">
+<style>.preview{max-width:680px;margin:40px auto}.screen{width:100%;aspect-ratio:2/1;display:block;image-rendering:pixelated;border:14px solid #1a2326;border-radius:16px;background:#10252c}.controls{display:flex;gap:10px;flex-wrap:wrap;margin:20px 0}.notes{padding:20px;background:var(--sub);border-radius:12px}input[type=range]{flex:1;min-width:0;width:auto;max-width:none}</style></head><body><main class="preview">
+<small>TFT / INTERFACE STUDY</small><h1>把七段缩写，变成操作提示</h1>
+<canvas id="screen" class="screen" width="640" height="320" aria-label="彩屏界面预览"></canvas>
+<div class="controls"><button data-page="weight" class="primary">称重</button><button data-page="cal">20g标定向导</button><button data-page="settings">设置</button><button data-page="fault">异常</button></div>
+<label>模拟重量 <input id="mass" type="range" min="0" max="5000" step="0.1" value="120.5"></label>
+<div class="controls"><button id="tap">SW4短按</button><button id="hold">SW4长按约2秒</button><button id="reset">重置预览</button></div>
+<p id="caption" role="status"></p>
+<div class="notes"><p>界面按横向160×80像素的小屏比例规划，实际分辨率、控制器和偏移待屏幕型号确认后确定。此页演示布局和操作流程。</p>
+<p>称重页显示大号净重、稳定/皮重、外部电源与蓝牙活动；标定页依次显示清空秤盘、设置质量、放20g、保存结果。沿用SW4，无需触摸屏。英文缩写也可作为字库较小时的首版。</p>
+<p>MCU采用分块直写、局部刷新，段码屏保留为同步数值显示。<a href="https://github.com/lin-gengyou/py32-kitchen-scale/blob/main/docs/color-display.md">查看接口与资源方案</a></p></div>
+<p><a href="index.html">← 蓝牙称重客户端</a></p>
+</main><script>
+const canvas=document.getElementById('screen'),ctx=canvas.getContext('2d');
+let page='weight',step=0,tare=0,menu=0;
+const captions={weight:'短按去皮。拖动重量可观察净重；长按回设置。',cal:'长按约2秒确认当前步骤；清空、20g质量、加载、保存。',settings:'短按切换设置项；长按进入标定。',fault:'超载、传感器错误、电源错误独立提示，短按查看下一种。'};
+function text(s,x,y,size,color='#e8f3f0'){ctx.fillStyle=color;ctx.font=`${size}px system-ui,"Microsoft YaHei"`;ctx.fillText(s,x,y);}
+function draw(){ctx.fillStyle='#10252c';ctx.fillRect(0,0,640,320);ctx.fillStyle='#20383f';ctx.fillRect(0,0,640,54);
+text('外部电源',20,36,24);text('蓝牙活动 ●',452,36,24,'#7acdbb');
+if(page==='weight'){text(tare?'净重 / 已去皮':'当前重量 / 稳定',22,96,24,'#8eafa9');const n=Number(document.getElementById('mass').value)-tare;text(n.toFixed(1),22,213,100);text('g',560,213,42);text('短按去皮    长按归零    按住3秒设置',22,291,24,'#8eafa9');}
+if(page==='cal'){const a=[['01  清空秤盘','空秤稳定后，长按确认'],['02  标定质量','20 g · 长按确认'],['03  放上砝码','放置20g，稳定后长按'],['04  标定已保存','移走砝码检查回零']][step%4];text(a[0],24,133,42);text(a[1],24,207,30);text(`${step%4+1} / 4`,530,290,26,'#7acdbb');}
+if(page==='settings'){const a=['07  称重标定','03  蜂鸣器','04  待机时间','17  电源类型','20  蓝牙通信'];text('设置',24,107,28,'#8eafa9');text(a[menu%a.length],24,190,46);text('短按下一项 · 长按确认',24,281,27,'#8eafa9');}
+if(page==='fault'){const a=[['超过量程','移走物品，保留毛重保护'],['采集故障','检查传感器与HX711'],['电源异常','检查电源连接与电源类型']][menu%3];text(a[0],24,141,52,'#ffb298');text(a[1],24,222,30);}
+document.getElementById('caption').textContent=captions[page];}
+document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;step=menu=0;draw();});
+document.getElementById('mass').oninput=draw;
+document.getElementById('tap').onclick=()=>{if(page==='weight')tare=Number(document.getElementById('mass').value);else menu++;draw();};
+document.getElementById('hold').onclick=()=>{if(page==='cal')step++;else if(page==='settings')page='cal';else page='settings';draw();};
+document.getElementById('reset').onclick=()=>{page='weight';step=tare=menu=0;document.getElementById('mass').value=120.5;draw();};draw();
+</script></body></html>

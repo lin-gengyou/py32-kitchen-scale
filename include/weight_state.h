@@ -11,6 +11,9 @@ typedef enum {
     WEIGHT_RANGE,                /* 超出有效量程或数值范围。 */
     WEIGHT_OVERLOAD,             /* 达到 OL 门限。 */
     WEIGHT_SENSOR_ERROR,         /* 采集故障。 */
+    WEIGHT_LOW_BATTERY,          /* 电池电压低，当前重量不作为正常测量发布。 */
+    WEIGHT_POWER_ERROR,          /* 电池模式下ADC采样故障。 */
+    WEIGHT_CALIBRATING,          /* 本机标定向导进行中，不发布普通重量。 */
     WEIGHT_SLEEP,                /* 软件待机。 */
 } WeightStatus;
 

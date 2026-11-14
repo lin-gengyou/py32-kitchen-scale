@@ -12,7 +12,7 @@
 #endif
 #define CONFIG_PAGE_SIZE 128U
 #define CONFIG_MAGIC 0x53434C35U
-#define CONFIG_VERSION 2U
+#define CONFIG_VERSION 3U
 #define FIRMWARE_VERSION SCALE_FIRMWARE_VERSION_CODE
 
 typedef struct {
@@ -47,13 +47,19 @@ void scale_config_defaults(ScaleConfig *config)
     config->stable_counts = 64;
     config->auto_off_seconds = 120;
     config->display_interval_ms = 200;
+    config->battery_reference_mv = 1200;
+    config->lcd_missing_mask = 4;
+    config->bluetooth_enabled = 1;
     strcpy(config->device_id, "UNSET");
 }
 
 /* CRC 校验之外检查物理范围与标定单调性，避免非法系数进入除法换算。 */
 bool scale_config_valid(const ScaleConfig *config)
 {
-    if (config->display_interval_ms < 100U || config->display_interval_ms > 200U ||
+    if (config->battery_profile > 3U || config->battery_reference_mv < 1000U ||
+        config->battery_reference_mv > 1400U || config->bluetooth_enabled > 1U ||
+        (config->lcd_missing_mask != 0U && config->lcd_missing_mask != 4U) ||
+        config->display_interval_ms < 100U || config->display_interval_ms > 200U ||
         config->point_count > 3U || config->stable_counts == 0U ||
         config->stable_counts > 1000000U || config->auto_off_seconds > 86400U ||
         config->buzzer_mode > 2U || config->unit > 1U ||
@@ -76,20 +82,20 @@ bool scale_config_valid(const ScaleConfig *config)
     return true;
 }
 
-/* V1 的字段前缀原样保留：升级后恢复旧标定，并给新增刷新周期填 200ms。 */
+/* V1/V2字段前缀原样保留，新增电源/显示/蓝牙设置填默认值。 */
 static bool record_read(const ConfigRecord *record, ScaleConfig *result)
 {
     if (record->magic != CONFIG_MAGIC) { return false; }
     ScaleConfig candidate;
-    if (record->version == 1U) {
-        const size_t prefix = offsetof(ScaleConfig, display_interval_ms);
+    if (record->version == 1U || record->version == 2U) {
+        const size_t prefix = record->version == 1U ? offsetof(ScaleConfig, display_interval_ms) :
+            offsetof(ScaleConfig, battery_profile);
         const size_t length = offsetof(ConfigRecord, config) + prefix;
         uint32_t stored_crc;
         memcpy(&stored_crc, (const uint8_t *)record + length, sizeof(stored_crc));
         if (stored_crc != config_crc(record, length)) { return false; }
-        memset(&candidate, 0, sizeof(candidate));
+        scale_config_defaults(&candidate);
         memcpy(&candidate, &record->config, prefix);
-        candidate.display_interval_ms = 200;
     } else if (record->version == CONFIG_VERSION &&
                record->crc == config_crc(record, offsetof(ConfigRecord, crc))) {
         candidate = record->config;

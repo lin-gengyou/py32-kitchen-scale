@@ -18,6 +18,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: python tools/run_host_checks.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/web/protocol.test.mjs
 
   firmware:
     name: Build PWLINK2 and J-Link firmware targets

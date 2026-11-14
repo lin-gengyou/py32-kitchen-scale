@@ -10,6 +10,10 @@
 static uint8_t frame[32];
 static uint8_t sent[32];
 static bool enabled;
+static unsigned missing_mask;
+
+void lcd_set_missing_mask(unsigned mask) { missing_mask = mask; }
+unsigned lcd_body_width(void) { return missing_mask ? 5U : 6U; }
 
 /* 仅保存最近一次实物读回，供调试器读取；不是发送缓存。 */
 volatile uint8_t lcd_ram_readback[32];
@@ -157,10 +161,11 @@ void lcd_text(const char *title, const char *value, uint8_t dots)
         digit(i, c, false);
     }
     ended = false;
-    for (unsigned i = 0; i < 6; ++i) {
+    for (unsigned i = 0; i < lcd_body_width(); ++i) {
         char c = ended ? ' ' : value[i];
         if (c == '\0') { ended = true; c = ' '; }
-        digit(i + 4U, c, (dots & (1U << i)) != 0U);
+        unsigned physical = i + (unsigned)(missing_mask != 0U && i >= 2U);
+        digit(physical + 4U, c, (dots & (1U << i)) != 0U);
     }
 }
 
@@ -170,7 +175,9 @@ void lcd_number(const char *title, int32_t value, unsigned decimals)
     char text[7] = "      ";
     bool negative = value < 0;
     uint32_t magnitude = negative ? (uint32_t)(-(int64_t)value) : (uint32_t)value;
-    unsigned at = 6;
+    unsigned width = lcd_body_width();
+    unsigned at = width;
+    text[width] = '\0';
     unsigned used = 0;
     do {
         if (at == 0U) { lcd_text(title, "------", 0); return; }
@@ -182,14 +189,16 @@ void lcd_number(const char *title, int32_t value, unsigned decimals)
         if (at == 0U) { lcd_text(title, "------", 0); return; }
         text[--at] = '-';
     }
-    lcd_text(title, text, decimals != 0U ? (uint8_t)(1U << (5U - decimals)) : 0U);
+    lcd_text(title, text, decimals != 0U ? (uint8_t)(1U << (width - 1U - decimals)) : 0U);
 }
 
 void lcd_weight(int32_t mg, bool kg, bool stable, bool tare)
 {
-    char title[5] = {kg ? 'k' : 'g', kg ? 'g' : ' ', tare ? 't' : ' ', stable ? 'S' : ' ', 0};
-    int32_t tenths = mg < 0 ? -(int32_t)((-(int64_t)mg + 50) / 100) : (mg + 50) / 100;
-    lcd_number(title, tenths, kg ? 4U : 1U);
+    bool negative = mg < 0;
+    char title[5] = {kg ? 'k' : 'g', kg ? 'g' : (negative ? '-' : ' '),
+        kg && negative ? '-' : (tare ? 't' : ' '), stable ? 'S' : ' ', 0};
+    uint32_t magnitude = negative ? (uint32_t)(-(int64_t)mg) : (uint32_t)mg;
+    lcd_number(title, (int32_t)((magnitude + 50U) / 100U), kg ? 4U : 1U);
 }
 
 void lcd_test_all(void) { memset(frame, 0x0f, sizeof(frame)); }

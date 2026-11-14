@@ -17,6 +17,10 @@ typedef struct {
     uint32_t calibration_date;   /* YYYYMMDD，0 表示尚未录入。 */
     char device_id[16];
     uint32_t display_interval_ms; /* 段码屏刷新周期，100～200ms。 */
+    uint32_t battery_profile;     /* 0外部电源，1单锂电，2双碱性，3双镍氢。 */
+    uint32_t battery_reference_mv; /* 内部参考标称1200mV，可按电压实测校准。 */
+    uint32_t lcd_missing_mask;    /* 0完整屏，4跳过已知故障的数值第三位。 */
+    uint32_t bluetooth_enabled;   /* ECB01C串口透传启用，所有操作仍可本机完成。 */
 } ScaleConfig;
 
 void scale_config_defaults(ScaleConfig *config);

@@ -9,6 +9,8 @@
 #include "weight_state.h"
 #include "firmware_version.h"
 #include "lcd_ht1621.h"
+#include "battery.h"
+#include "ble_link.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -74,13 +76,13 @@ static uint32_t reference_grams;
 static bool zero_set;
 
 /* 蜂鸣器使用分段计时，响声之间继续运行采样和按键。 */
-static BuzzerMode buzzer_mode = BUZZER_OFF;
-static uint8_t buzzer_remaining;
-static bool buzzer_on;
+static volatile BuzzerMode buzzer_mode = BUZZER_OFF;
+static volatile uint8_t buzzer_remaining;
+static volatile bool buzzer_on;
 static uint32_t buzzer_phase_ms;
-static uint32_t buzzer_tone_ms;
+static bool startup_zero_pending;
 
-/* 文档 V1.0 的持久配置和统一状态。电池信息在硬件换算确认前使用未知值。 */
+/* 文档V1.0的持久配置与统一状态；外部供电的电池百分比使用-1。 */
 static ScaleConfig saved_config;
 WeightState weight_state = {.battery_percent = -1, .division_mg = 100};
 static int32_t raw_samples[3];
@@ -129,7 +131,7 @@ static void board_init(void)
     pin.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(KEY_PORT, &pin);
 
-    /* PA2/PA3 保持复位输入状态，本版不启用串口和蓝牙。 */
+    /* PA2/PA3由ble_configure配置为ECB01C透传接口。 */
 }
 
 /* 固定 8MHz HSI 下，8 条 NOP 提供约 1us 的边沿间隔，另有指令执行开销。 */
@@ -323,6 +325,14 @@ static bool save_settings(const ScaleConfig *candidate)
     if (!scale_config_save(candidate)) {
         return false;
     }
+    if (candidate->battery_profile != saved_config.battery_profile ||
+        candidate->battery_reference_mv != saved_config.battery_reference_mv) {
+        battery_configure(candidate->battery_profile, candidate->battery_reference_mv);
+    }
+    lcd_set_missing_mask(candidate->lcd_missing_mask);
+    if (candidate->bluetooth_enabled != saved_config.bluetooth_enabled) {
+        ble_configure(candidate->bluetooth_enabled != 0U);
+    }
     saved_config = *candidate;
     stable_counts = candidate->stable_counts;
     buzzer_mode = (BuzzerMode)candidate->buzzer_mode;
@@ -343,7 +353,10 @@ static bool overloaded(uint32_t now)
 /* 检查测量操作的共同前提，并返回本机界面可显示的原因。NULL 表示允许执行。 */
 static const char *measurement_error(uint32_t now, bool check_capacity)
 {
-    if (!samples_ready(now)) {
+    if (saved_config.battery_profile != 0U && battery_state()->status >= BATTERY_LOW) {
+        return "ERR,POWER\r\n";
+    }
+    if (!samples_ready(now) || (saved_config.battery_profile != 0U && !battery_state()->valid)) {
         return "ERR,WAIT_SAMPLES\r\n";
     }
     if (check_capacity && overloaded(now)) {
@@ -367,6 +380,7 @@ static const char *set_zero(uint32_t now)
         }
     }
     zero_counts = average_counts();
+    startup_zero_pending = false;
     zero_set = true;
     empty_reference_known = true;
     empty_candidate = false;
@@ -402,7 +416,6 @@ static void buzzer_start(uint8_t pulses, uint32_t now)
     buzzer_remaining = pulses;
     buzzer_on = true;
     buzzer_phase_ms = now;
-    buzzer_tone_ms = now;
     HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
 }
 
@@ -415,7 +428,6 @@ static void buzzer_poll(uint32_t now)
     uint32_t duration = buzzer_on ? BUZZER_ON_MS : BUZZER_GAP_MS;
     if ((uint32_t)(now - buzzer_phase_ms) >= duration) {
         buzzer_phase_ms = now;
-        buzzer_tone_ms = now;
         if (buzzer_on) {
             --buzzer_remaining;
             buzzer_on = false;
@@ -424,12 +436,18 @@ static void buzzer_poll(uint32_t now)
             buzzer_on = true;
             HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
         }
-    } else if (buzzer_on && buzzer_mode == BUZZER_PASSIVE &&
-               (uint32_t)(now - buzzer_tone_ms) >= 1U) {
-        buzzer_tone_ms = now;
+    }
+
+}
+
+/* 1ms中断只翻转蜂鸣器，不做采样/Flash/界面；彩屏刷新时音调也保持500Hz。 */
+void scale_tick_1ms(void)
+{
+    if (buzzer_mode == BUZZER_PASSIVE && buzzer_on && buzzer_remaining != 0U) {
         HAL_GPIO_TogglePin(BUZZER_PORT, BUZZER_PIN);
     }
 }
+void scale_uart_irq(void) { ble_uart_irq(); }
 
 /* 分度选择保留小滞回区，避免 200g 和 1000g 附近因噪声反复切换。 */
 static uint16_t select_division(int32_t net_mg)
@@ -449,11 +467,20 @@ static uint16_t select_division(int32_t net_mg)
 static void weight_update(uint32_t now)
 {
     weight_state.unit = saved_config.unit;
+    const BatteryState *power = battery_state();
+    weight_state.battery_percent = power->percent;
     weight_state.stable = false;
     if (sleeping) {
         weight_state.status = WEIGHT_SLEEP;
         weight_state.motion = MOTION_SLEEP;
         return;
+    }
+    if (saved_config.battery_profile != 0U && power->status >= BATTERY_LOW) {
+        weight_state.status = power->status == BATTERY_ADC_ERROR ? WEIGHT_POWER_ERROR : WEIGHT_LOW_BATTERY;
+        weight_state.motion = MOTION_FAULT; return;
+    }
+    if (saved_config.battery_profile != 0U && !power->valid) {
+        weight_state.status = WEIGHT_WAIT; weight_state.motion = MOTION_CANDIDATE; return;
     }
     if (sample_fault || adc_saturated || (uint32_t)(now - last_sample_ms) >= HX711_TIMEOUT_MS) {
         weight_state.status = WEIGHT_SENSOR_ERROR;
@@ -554,6 +581,9 @@ static void power_poll(uint32_t now)
         idle_since_ms = now;
         return;
     }
+    if (startup_zero_pending) {
+        zero_counts = average_counts(); startup_zero_pending = false; weight_update(now);
+    }
     if (!empty_candidate) {
         empty_candidate = true;
         empty_since_ms = now;
@@ -580,7 +610,8 @@ static void alarm_poll(uint32_t now)
     static bool alarming;
     static uint32_t alarm_ms;
     bool fault = !sleeping && (weight_state.status == WEIGHT_SENSOR_ERROR ||
-                 weight_state.status == WEIGHT_OVERLOAD || weight_state.status == WEIGHT_RANGE);
+                 weight_state.status == WEIGHT_OVERLOAD || weight_state.status == WEIGHT_RANGE ||
+                 weight_state.status == WEIGHT_LOW_BATTERY || weight_state.status == WEIGHT_POWER_ERROR);
     if (fault && (!alarming || (uint32_t)(now - alarm_ms) >= ALARM_INTERVAL_MS)) {
         buzzer_start(3, now);
         alarm_ms = now;
@@ -602,12 +633,28 @@ static void watchdog_start(void)
 /* 本机界面直接复用上述测量与存储逻辑。 */
 #include "scale_ui.inc"
 
+/* 远端和板上按键调用同一测量函数。标定过程拒绝远端改皮重。 */
+static bool local_calibrating(void)
+{
+    return ui.page == UI_CAL_COUNT || ui.page == UI_CAL_EMPTY || ui.page == UI_CAL_LOAD ||
+        (ui.page == UI_EDIT && ui.edit_kind == EDIT_MASS);
+}
+const char *scale_remote_tare(uint32_t now)
+{
+    if (local_calibrating()) { return "ERR,BUSY\r\n"; }
+    idle_since_ms = now; if (sleeping) { wake_scale(now); }
+    const char *result = set_tare(now); ui_result(result, now); return result;
+}
+void scale_remote_wake(uint32_t now) { wake_scale(now); idle_since_ms = now; }
+
 /* 主循环交替处理采样、按键、屏幕与蜂鸣器，菜单编辑期间继续采样。 */
 int main(void)
 {
     HAL_Init();
     board_init();
     scale_config_load(&saved_config);
+    battery_configure(saved_config.battery_profile, saved_config.battery_reference_mv);
+    lcd_set_missing_mask(saved_config.lcd_missing_mask);
     stable_counts = saved_config.stable_counts;
     buzzer_mode = (BuzzerMode)saved_config.buzzer_mode;
     zero_counts = saved_config.zero_counts;
@@ -615,13 +662,15 @@ int main(void)
         unsigned last = saved_config.point_count - 1U;
         reference_grams = saved_config.grams[last];
         zero_set = true;
-        empty_reference_known = true;
+        empty_reference_known = true; startup_zero_pending = true;
     }
     started_ms = HAL_GetTick();
     last_sample_ms = started_ms;
     ui.startup_ms = started_ms;
     display_interval_ms = saved_config.display_interval_ms;
     lcd_init();
+    battery_init(started_ms);
+    ble_configure(saved_config.bluetooth_enabled != 0U);
     uint32_t led_ms = started_ms;
     uint32_t power_ms = started_ms;
     idle_since_ms = started_ms;
@@ -633,10 +682,12 @@ int main(void)
         if (watchdog_ready) {
             HAL_IWDG_Refresh(&watchdog);
         }
+        battery_poll(now, sleeping);
         sample_poll(now);
         key_poll(now);
         if ((uint32_t)(now - power_ms) >= 10U) {
             power_ms = now;
+            weight_update(now);
             if (ui.page == UI_WEIGH) { power_poll(now); alarm_poll(now); }
             else { idle_since_ms = now; empty_candidate = false; }
         }
@@ -646,6 +697,8 @@ int main(void)
             HAL_GPIO_TogglePin(LED_PORT, LED_PIN);
         }
         ui_render(now);
+        if (local_calibrating()) { weight_state.status = WEIGHT_CALIBRATING; weight_state.stable = false; }
+        ble_poll(now, &weight_state, display_interval_ms);
         if (sleeping) {
             __WFI();
         }

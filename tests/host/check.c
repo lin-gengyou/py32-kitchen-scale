@@ -35,6 +35,8 @@ HAL_StatusTypeDef HAL_FLASH_Program(uint32_t type, uintptr_t address, uint32_t *
 #include "../../src/scale_config.c"
 #define SCALE_HOST_TEST 1
 #include "../../src/lcd_ht1621.c"
+#include "../../src/battery.c"
+#include "../../src/ble_link.c"
 #define main firmware_main
 #include "../../src/scale_basic.c"
 #undef main
@@ -134,6 +136,8 @@ static void local_calibration(uint32_t *now, int direction, unsigned points)
     assert(saved_config.spans[points - 1U] == direction * (int32_t)(grams[points - 1U] * 1000U));
 }
 
+#include "completion.inc"
+
 int main(void)
 {
     watchdog_start();
@@ -161,7 +165,7 @@ int main(void)
     lcd_init();
     assert((host_gpio_f.ODR & GPIO_PIN_1) && (host_gpio_a.ODR & GPIO_PIN_4));
     ui_event(KEY_TAP, now);
-    assert(strcmp(ui.message, "no CAL") == 0);
+    assert(strcmp(ui.message, "noCAL") == 0);
     /* 本机三点标定，负方向传感器；直到最后一步才提交一次。 */
     local_calibration(&now, -1, 3);
     assert(scale_config_load(&recovered) && recovered.point_count == 3);
@@ -284,6 +288,7 @@ int main(void)
     key_time(true,100,100000,&now); key_time(false,400,100000,&now);
     assert(!sleeping && enabled && tare_counts==0 && ui.page==UI_WEIGH);
 
+    lcd_set_missing_mask(0);
     /* LCD: g/kg 小数位置、负号与溢出显示，以及菜单标题、空白和自检。 */
     lcd_weight(500,true,true,false); assert((frame[10+1] & 8U)!=0); /* 0.0005kg */
     lcd_weight(500,false,true,true); assert((frame[18+1] & 8U)!=0); /* 0.5g */
@@ -340,6 +345,7 @@ int main(void)
     ui_event(KEY_DOUBLE,now); assert(saved_config.point_count==3);
     open_item(MENU_CLEAR,now);ui_event(KEY_HOLD,now);
     assert(saved_config.point_count==0 && reference_grams==0 && ui.page==UI_WEIGH);
+    completion_checks();
     printf("PASS: physical key debounce/double/long/wake; local menus and atomic 1/2/3-point calibration;\n");
     printf("      LCD digits/decimal/sign; persistent settings and V1 migration; all partial-page cutoffs;\n");
     printf("      small-load preservation, gross overload, negative net, standby, recovery and tick wrap.\n");

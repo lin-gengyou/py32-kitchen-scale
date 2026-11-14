@@ -5,6 +5,8 @@
 
 /* 板载 HT1621B：PB2=CS，PA5=WR，PA7=DATA，PF1=RD（写操作时保持高）。 */
 void lcd_init(void);
+void lcd_set_missing_mask(unsigned mask);
+unsigned lcd_body_width(void);
 void lcd_power(bool enabled);
 void lcd_clear(void);
 void lcd_text(const char *title, const char *value, uint8_t decimal_mask);
