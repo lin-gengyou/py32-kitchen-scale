@@ -347,8 +347,10 @@ static void ui_render(uint32_t now)
     } else if (ui.page == UI_CONFIRM_CLEAR) { lcd_text(ui.menu == MENU_RESET ? "2100" : "1200", "SUrE", 0); }
     else if (ui.page == UI_RAW) {
         int32_t value = latest_raw;
-        if (ui.info_page % 2U == 0U) { lcd_number(value < 0 ? "rA-L" : "rAWL", value < 0 ? -(value % (int32_t)power10(lcd_body_width())) : value % (int32_t)power10(lcd_body_width()), 0); }
-        else { lcd_number("rAWH", value / (int32_t)power10(lcd_body_width()), 0); }
+        uint32_t magnitude = value < 0 ? 0U - (uint32_t)value : (uint32_t)value;
+        if (ui.info_page % 3U == 0U) { lcd_number(value < 0 ? "rA-L" : "rAWL", (int32_t)(magnitude % power10(lcd_body_width())), 0); }
+        else if (ui.info_page % 3U == 1U) { lcd_number("rAWH", counts_divide(value,power10(lcd_body_width())), 0); }
+        else { lcd_number("rSt",(int32_t)hx711_restarts,0); }
     } else if (ui.page == UI_INFO) {
         switch (ui.info_page % 7U) {
         case 0: lcd_text("vEr", SCALE_VERSION_DISPLAY, 0x03); break;

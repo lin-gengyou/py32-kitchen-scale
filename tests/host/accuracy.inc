@@ -58,6 +58,13 @@ static void accuracy_checks(void)
     stable=false;int32_t a=filtered_counts();stable=true;assert(filtered_counts()==a); /* 不再切换均值。 */
     const int32_t negative[]={-100,-101,-102,-103,-104};
     assert(trimmed_mean(negative,5,NULL)==-102); /* 防止负数除以unsigned而变成巨值。 */
+    static const int32_t signed_cases[]={INT32_MIN,-8388608,-1234567,-1,0,1,8388607,INT32_MAX};
+    static const uint32_t positive_divisors[]={1,3,6,14,100000,1000000};
+    for(unsigned i=0;i<sizeof(signed_cases)/sizeof(signed_cases[0]);++i){
+        for(unsigned j=0;j<sizeof(positive_divisors)/sizeof(positive_divisors[0]);++j){
+            assert(counts_divide(signed_cases[i],positive_divisors[j])==(int32_t)((int64_t)signed_cases[i]/positive_divisors[j]));
+        }
+    }
     uint32_t unit=saved_config.unit;
     ui_event(KEY_TAP,now);assert(capture.kind==MEASURE_TARE);
     ui_event(KEY_DOUBLE,now);assert(capture.kind==MEASURE_NONE && saved_config.unit==unit);
@@ -68,8 +75,13 @@ static void accuracy_checks(void)
     sample_fault=true;measurement_poll(now+1);assert(capture.count==0);
     finish_capture(zero_counts+800,&now);assert(tare_counts==800);
     int32_t old_tare=tare_counts;
-    ui_event(KEY_TAP,now);measurement_poll(now+20001);
+    ui_event(KEY_TAP,now);
+    for(unsigned i=0;i<200U;++i){now+=100;sample_add(zero_counts+(i%2U ? 3000 : -3000),now);measurement_poll(now);}
+    measurement_poll(++now);
     assert(capture.kind==MEASURE_NONE && tare_counts==old_tare && strcmp(ui.message,"UnSt")==0);
+    ui_event(KEY_TAP,now);sample_fault=true;measurement_poll(now+20001U);
+    assert(capture.kind==MEASURE_NONE && tare_counts==old_tare && strcmp(ui.message,"no Ad")==0);
+    sample_fault=false;
     printf("PASS: post-release 16-sample acquisition, button force rejection, unload verification/rollback;\n");
     printf("      0/20g/0 calibration, async tare/zero/cancel/timeout, fractional zero tracking,\n");
     printf("      quantizer hysteresis, negative signed mean, and 0.5g preservation.\n");

@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <inttypes.h>
 #include <string.h>
 #include "py32f0xx_hal.h"
 
@@ -44,6 +45,7 @@ HAL_StatusTypeDef HAL_FLASH_Program(uint32_t type, uintptr_t address, uint32_t *
 GPIO_TypeDef host_gpio_a, host_gpio_b, host_gpio_f;
 USART_TypeDef host_usart;
 bool host_dbg_clock_enabled, host_iwdg_frozen;
+uint32_t host_primask;
 
 static void storage_checks(void)
 {
@@ -147,9 +149,11 @@ static void local_calibration(uint32_t *now, int direction, unsigned points)
     assert(saved_config.spans[points - 1U] == direction * (int32_t)(grams[points - 1U] * 1000U));
 }
 
+#include "hx711.inc"
 #include "completion.inc"
 #include "stability.inc"
 #include "accuracy.inc"
+#include "replay.inc"
 
 int main(void)
 {
@@ -157,6 +161,7 @@ int main(void)
     assert(host_dbg_clock_enabled && host_iwdg_frozen && watchdog_ready);
     watchdog_ready = false;
     host_gpio_b.IDR=KEY_PIN;
+    hx711_protocol_checks();
     storage_checks();
     /* 用旧布局构造真实 V1 记录，验证刷新周期字段升级不会丢失旧标定。 */
     ScaleConfig legacy;
@@ -363,6 +368,7 @@ int main(void)
     stability_checks();
     completion_checks();
     accuracy_checks();
+    replay_checks();
     printf("PASS: physical key debounce/double/long/wake; local menus and atomic 1/2/3-point calibration;\n");
     printf("      LCD digits/decimal/sign; persistent settings and V1 migration; all partial-page cutoffs;\n");
     printf("      small-load preservation, gross overload, negative net, standby, recovery and tick wrap.\n");

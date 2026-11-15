@@ -10,6 +10,9 @@ typedef struct { uint32_t Mode, Pull, Speed, Pin, Alternate; } GPIO_InitTypeDef;
 extern GPIO_TypeDef host_gpio_a, host_gpio_b, host_gpio_f;
 extern USART_TypeDef host_usart;
 extern bool host_dbg_clock_enabled, host_iwdg_frozen;
+extern uint32_t host_primask;
+void host_hx711_clock(bool high);
+bool host_hx711_data(void);
 #define GPIOA (&host_gpio_a)
 #define GPIOB (&host_gpio_b)
 #define GPIOF (&host_gpio_f)
@@ -46,9 +49,9 @@ extern bool host_dbg_clock_enabled, host_iwdg_frozen;
 #define __HAL_RCC_USART1_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_DBGMCU_CLK_ENABLE() (host_dbg_clock_enabled = true)
 #define __NOP() ((void)0)
-#define __disable_irq() ((void)0)
-#define __get_PRIMASK() (0U)
-#define __set_PRIMASK(mask) ((void)(mask))
+#define __disable_irq() (host_primask = 1U)
+#define __get_PRIMASK() (host_primask)
+#define __set_PRIMASK(mask) (host_primask = (mask))
 #define __WFI() ((void)0)
 #define __HAL_DBGMCU_FREEZE_IWDG() (host_iwdg_frozen = host_dbg_clock_enabled)
 #define HAL_Init() ((void)0)

@@ -22,7 +22,7 @@ def main():
                               "-I" + str(root / "tests/host"), "-I" + str(root / "include"),
                               str(root / "tests/host/check.c"), "-o", str(program)]
         subprocess.run(command, check=True)
-        subprocess.run([str(program)], check=True)
+        subprocess.run([str(program)], check=True, cwd=root)
 
 
 if __name__ == "__main__":

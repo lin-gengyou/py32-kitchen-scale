@@ -9,10 +9,10 @@ import shutil
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="v2.1.0")
+    parser.add_argument("--version", default="v2.1.1")
     args = parser.parse_args()
     if not re.fullmatch(r"v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*", args.version):
-        parser.error("版本示例：v2.1.0")
+        parser.error("版本示例：v2.1.1")
     root = Path(__file__).resolve().parents[1]
     pairs = {"blink": "scale_py32f002a", "scale_basic": "scale_basic"}
     source = {name + "." + extension:
@@ -33,7 +33,7 @@ def main():
         shutil.copyfile(path, dest / name)
         hashes.append(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + name)
     (dest / "SHA256SUMS").write_text("\n".join(hashes) + "\n", encoding="utf-8", newline="\n")
-    files = [p for folder in ("src", "include", "boards", "ldscripts", "tools", "web")
+    files = [p for folder in ("src", "include", "boards", "ldscripts", "tools", "web", "tests")
              for p in (root / folder).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
     files.extend([root / "platformio.ini", root / "pyocd.yaml"])
     manifest = {"version": version, "interface": "SW4 + HT1621B + ECB01C BLE", "serial_enabled": True, "power_default": "external", "tft": "interface proposal", "source_sha256": {

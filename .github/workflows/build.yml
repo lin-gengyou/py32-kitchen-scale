@@ -18,6 +18,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: python tools/run_host_checks.py
+      - run: python tools/run_host_checks.py --cc "gcc -O2 -fstrict-aliasing"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

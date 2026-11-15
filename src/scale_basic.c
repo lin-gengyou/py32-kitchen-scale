@@ -27,6 +27,15 @@
 #define LED_PORT GPIOB
 #define LED_PIN GPIO_PIN_0
 
+/* 主机回归可逐沿模拟DOUT；目标固件直接访问GPIO，不增加运行时抽象开销。 */
+#ifdef SCALE_HOST_TEST
+#define HX711_CLOCK(high) host_hx711_clock(high)
+#define HX711_DATA_HIGH() host_hx711_data()
+#else
+#define HX711_CLOCK(high) (HX711_PORT->BSRR = (high) ? HX711_CLOCK_PIN : (uint32_t)HX711_CLOCK_PIN << 16)
+#define HX711_DATA_HIGH() ((HX711_PORT->IDR & HX711_DATA_PIN) != 0U)
+#endif
+
 /* 联调默认值。稳定阈值按 ADC 计数设置，量程和实际精度需要实物确认。 */
 enum {
     AVERAGE_SAMPLES = 8,          /* 连续8点去极值均值，稳定/变化时使用相同滤波。 */
@@ -61,6 +70,8 @@ static uint8_t sample_index;
 static uint32_t started_ms;
 static uint32_t last_sample_ms;
 static bool hx711_started;
+static bool hx711_resetting;
+static volatile uint32_t hx711_restarts; /* 启动及异常重同步次数，菜单08可查看。 */
 static bool sample_fault;
 static bool adc_saturated;
 static bool settling;
@@ -165,15 +176,15 @@ static bool hx711_read(int32_t *counts)
     __disable_irq();
     hx711_edge_delay();
     for (unsigned pulse = 0; pulse < 25; ++pulse) {
-        HX711_PORT->BSRR = HX711_CLOCK_PIN;
+        HX711_CLOCK(true);
         hx711_edge_delay();
         if (pulse < 24) {
-            bits = (bits << 1) | ((HX711_PORT->IDR & HX711_DATA_PIN) != 0U);
+            bits = (bits << 1) | HX711_DATA_HIGH();
         }
-        HX711_PORT->BSRR = (uint32_t)HX711_CLOCK_PIN << 16;
+        HX711_CLOCK(false);
         hx711_edge_delay();
     }
-    bool released = (HX711_PORT->IDR & HX711_DATA_PIN) != 0U;
+    bool released = HX711_DATA_HIGH();
     __set_PRIMASK(irq_mask);
 
     adc_saturated = bits == 0x800000U || bits == 0x7fffffU;
@@ -193,6 +204,21 @@ static void sample_reset(void)
     stable = false;
     raw_count = 0;
     raw_index = 0;
+}
+
+/* 上电和坏帧/超时都从已知的A/128状态重新开始。
+ * 高电平等待两个毫秒刻度，避开第一次刻度恰好到来的边界，超过60us复位门限。
+ * 等待期间主循环继续喂狗和处理按键。
+ * 拉低后再等待500ms（10SPS最短建立时间400ms），期间不接纳旧转换结果。
+ */
+static void hx711_restart(uint32_t now)
+{
+    ++hx711_restarts;
+    HX711_CLOCK(true);
+    hx711_resetting = true;
+    hx711_started = false;
+    started_ms = last_sample_ms = now;
+    sample_reset();
 }
 
 /* 自动判稳使用0.2g峰峰值；未标定时以128计数建立第一次标定。
@@ -266,6 +292,14 @@ static void sample_poll(uint32_t now)
     if (sleeping) {
         return;
     }
+    if (hx711_resetting) {
+        if ((uint32_t)(now - started_ms) >= 2U) {
+            HX711_CLOCK(false);
+            hx711_resetting = false;
+            started_ms = last_sample_ms = now;
+        }
+        return;
+    }
     /* 启动延时只执行一次，毫秒计数回绕后继续正常采样。 */
     if (!hx711_started) {
         if ((uint32_t)(now - started_ms) < HX711_STARTUP_MS) {
@@ -275,16 +309,17 @@ static void sample_poll(uint32_t now)
     }
     if ((uint32_t)(now - last_sample_ms) >= HX711_TIMEOUT_MS) {
         sample_fault = true;
-        sample_reset();
+        hx711_restart(now);
+        return;
     }
-    if ((HX711_PORT->IDR & HX711_DATA_PIN) != 0U) {
+    if (HX711_DATA_HIGH()) {
         return;
     }
 
     int32_t counts;
     if (!hx711_read(&counts)) {
         sample_fault = true;
-        sample_reset();
+        hx711_restart(now);
         return;
     }
     sample_add(counts, now);
@@ -295,6 +330,17 @@ static bool samples_ready(uint32_t now)
 {
     return sample_count >= FAST_SAMPLES && !sample_fault &&
            (uint32_t)(now - last_sample_ms) < HX711_TIMEOUT_MS;
+}
+
+/* 原始计数的除数均为正数。显式处理符号，共用Cortex-M0的无符号除法，
+ * 避免为两处正除数再链接一份通用有符号除法；负数仍向零截断。
+ */
+__attribute__((noinline,noclone))
+static int32_t counts_divide(int32_t value, uint32_t divisor)
+{
+    uint32_t magnitude = value < 0 ? 0U - (uint32_t)value : (uint32_t)value;
+    uint32_t quotient = magnitude / divisor;
+    return value < 0 ? (int32_t)(0U - quotient) : (int32_t)quotient;
 }
 
 /* 固定窗口去掉一个最高和最低值；显示不再随S切换3/8点两套均值。
@@ -308,7 +354,7 @@ static int32_t trimmed_mean(const int32_t *data, unsigned count, uint32_t *sprea
         int32_t v=data[i];sum+=v;if(v<low){low=v;}if(v>high){high=v;}
     }
     if(spread!=NULL){*spread=(uint32_t)(high-low);}
-    return (sum-low-high)/(int32_t)(count-2U);
+    return counts_divide(sum-low-high,count-2U);
 }
 static int32_t average_counts(void) { return trimmed_mean(samples,sample_count,NULL); }
 static int32_t filtered_counts(void) { return average_counts(); }
@@ -574,7 +620,7 @@ static void enter_standby(void)
     sleeping = true; capture.kind=MEASURE_NONE;
     lcd_power(false);
     sample_reset();
-    HAL_GPIO_WritePin(HX711_PORT, HX711_CLOCK_PIN, GPIO_PIN_SET);
+    HX711_CLOCK(true);
     HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
     buzzer_remaining = 0;
@@ -591,7 +637,8 @@ static void wake_scale(uint32_t now)
     }
     sleeping = false;
     lcd_power(true);
-    HAL_GPIO_WritePin(HX711_PORT, HX711_CLOCK_PIN, GPIO_PIN_RESET);
+    HX711_CLOCK(false);
+    hx711_resetting = false;
     sample_reset();
     sample_fault = false;
     adc_saturated = false;
@@ -685,7 +732,11 @@ static void measurement_poll(uint32_t now)
 {
     if (capture.kind==MEASURE_NONE) { return; }
     if ((uint32_t)(now-capture.started)>20000U) {
-        capture.kind=MEASURE_NONE;ui_result("ERR,UNSTABLE\r\n",now);return;
+        capture.kind=MEASURE_NONE;
+        ui_result(samples_ready(now) ? "ERR,UNSTABLE\r\n" : "ERR,WAIT_SAMPLES\r\n",now);return;
+    }
+    if(saved_config.battery_profile!=0U && (!battery_state()->valid || battery_state()->status>=BATTERY_LOW)){
+        capture.kind=MEASURE_NONE;ui_result("ERR,POWER\r\n",now);return;
     }
     if ((KEY_PORT->IDR&KEY_PIN)==0U) { capture.released=now;capture.count=0; }
     if ((uint32_t)(now-capture.released)<800U || !samples_ready(now)) {
@@ -700,8 +751,6 @@ static void measurement_poll(uint32_t now)
     if(trend<0){trend=-trend;}
     if(spread>limit*2U || (uint32_t)trend>limit*4U){capture.count=0;return;}
     MeasurementKind kind=capture.kind;capture.kind=MEASURE_NONE;
-    if(saved_config.battery_profile!=0U && !battery_state()->valid){ui_result("ERR,POWER\r\n",now);return;}
-    if(saved_config.battery_profile!=0U && battery_state()->status>=BATTERY_LOW){ui_result("ERR,POWER\r\n",now);return;}
     if(kind==MEASURE_CAL){ui_cal_apply(mean,now);return;}
     const char *result;
     if(reference_grams!=0U && gross_milligrams(mean)>(int64_t)MAX_GROSS_GRAMS*1000){result="ERR,OVERLOAD\r\n";}
@@ -742,7 +791,7 @@ int main(void)
         empty_reference_known = true; startup_zero_pending = true;
     }
     started_ms = HAL_GetTick();
-    last_sample_ms = started_ms;
+    hx711_restart(started_ms);
     ui.startup_ms = started_ms;
     display_interval_ms = saved_config.display_interval_ms;
     lcd_init();
