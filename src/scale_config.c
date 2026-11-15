@@ -153,17 +153,17 @@ bool scale_config_save(const ScaleConfig *config)
     }
     unsigned target = active == 0 ? 1U : 0U;
     uintptr_t address = SCALE_CONFIG_BASE + target * CONFIG_PAGE_SIZE;
-    uint32_t page[CONFIG_PAGE_SIZE / sizeof(uint32_t)];
-    memset(page, 0xFF, sizeof(page));
-    ConfigRecord record = {
-        .magic = CONFIG_MAGIC,
-        .version = CONFIG_VERSION,
-        .generation = generation,
-        .firmware_version = FIRMWARE_VERSION,
-        .config = *config,
-    };
-    record.crc = config_crc(&record, offsetof(ConfigRecord, crc));
-    memcpy(page, &record, sizeof(record));
+    union {
+        uint32_t words[CONFIG_PAGE_SIZE / sizeof(uint32_t)];
+        ConfigRecord record;
+    } page;
+    memset(&page, 0xFF, sizeof(page));
+    /* 直接在整页缓冲构造记录，避免再复制一个108B结构，减少Flash代码与栈占用。 */
+    ConfigRecord *record=&page.record;
+    record->magic=CONFIG_MAGIC;record->version=CONFIG_VERSION;
+    record->generation=generation;record->firmware_version=FIRMWARE_VERSION;
+    record->config=*config;
+    record->crc=config_crc(record,offsetof(ConfigRecord,crc));
 
     if (HAL_FLASH_Unlock() != HAL_OK) {
         return false;
@@ -176,12 +176,12 @@ bool scale_config_save(const ScaleConfig *config)
     uint32_t page_error;
     HAL_StatusTypeDef status = HAL_FLASHEx_Erase(&erase, &page_error);
     if (status == HAL_OK) {
-        status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_PAGE, address, page);
+        status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_PAGE, address, page.words);
     }
     /* 固定版本 SDK 的编程错误出口可能保留软件锁，串行调用结束后恢复该锁。 */
     pFlash.Lock = HAL_UNLOCKED;
     HAL_FLASH_Lock();
     /* 以读回的完整记录为提交结果，兼容数据已写完但驱动随后报告错误的情况。 */
     return record_valid((const ConfigRecord *)address) &&
-           memcmp((const void *)address, &record, sizeof(record)) == 0;
+           memcmp((const void *)address, record, sizeof(*record)) == 0;
 }

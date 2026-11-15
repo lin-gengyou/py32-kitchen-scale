@@ -35,3 +35,12 @@ HT1621时序依据[Holtek原厂手册](https://www.holtek.com/webapi/116711/HT16
 - [易加物联ECB01C技术手册V1.2](https://offer-product.oss-cn-beijing.aliyuncs.com/product/offer/attachment/2215891934535/file/subPdf_561358_264786_20230530-174416186.pdf)：9600/8N1、FFF0/FFF1/FFF2、3分钟下行超时。
 - [Chrome Web Bluetooth官方文档](https://developer.chrome.com/docs/capabilities/bluetooth)：安全上下文、用户选择、通知及重连后重新发现。
 - 客户端为项目自有原生HTML/CSS/JavaScript，无运行时第三方依赖。纯协议检查使用Node内置测试；可选界面回归使用Playwright1.62.1和本机Edge。
+
+## v2.1.0称重采样与标定参考
+
+- [HX711_ADC作者源码](https://github.com/olkal/HX711_ADC/blob/master/src/HX711_ADC.cpp)：连续更新、去掉最高/最低样本后的均值、非阻塞去皮等待新数据集。
+- [HX711_ADC采样配置](https://github.com/olkal/HX711_ADC/blob/master/src/config.h)：采样窗口长度、10SPS下的建立时间和高电平时序要求。
+- [bogde/HX711作者源码](https://github.com/bogde/HX711/blob/master/src/HX711.cpp)：新采样平均、零点偏移和标定比例换算。
+- [AVIA HX711数据手册](https://www.mouser.com/pdfdocs/HX711datasheet.pdf)：10SPS下400ms建立时间，PD_SCK高电平超过60µs进入掉电。
+
+本项目参考上述采样思路，自行实现整数去极值滑动均值、松手后16点采集、卸载回零检查与按键状态机；未直接引入Arduino库源码。

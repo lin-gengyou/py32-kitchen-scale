@@ -4,7 +4,7 @@
  * 菜单短按下一项，1.5 秒长按确认，双击返回；数字编辑双击移位，3 秒长按取消。
  */
 typedef enum { UI_WEIGH, UI_MENU, UI_CHOICE, UI_EDIT, UI_CAL_COUNT,
-    UI_CAL_EMPTY, UI_CAL_LOAD, UI_CONFIRM_CLEAR, UI_RAW, UI_INFO, UI_TEST, UI_BATTERY } UiPage;
+    UI_CAL_EMPTY, UI_CAL_LOAD, UI_CONFIRM_CLEAR, UI_RAW, UI_INFO, UI_TEST, UI_BATTERY, UI_CAL_VERIFY } UiPage;
 typedef enum { MENU_UNTARE, MENU_UNIT, MENU_BUZZER, MENU_OFF, MENU_STABLE,
     MENU_RATE, MENU_CAL, MENU_RAW, MENU_INFO, MENU_ID, MENU_DATE, MENU_CLEAR,
     MENU_TEST, MENU_SLEEP, MENU_EXIT, MENU_BATTERY, MENU_SOURCE, MENU_VREF, MENU_DISPLAY, MENU_BLUETOOTH, MENU_RESET, MENU_COUNT } UiMenu;
@@ -154,44 +154,58 @@ static void ui_cal_next_mass(void)
     ui_edit(EDIT_MASS, ui.cal_count == 1U ? 20U : defaults[ui.cal_index], 1, 5000);
 }
 
-static void ui_cal_sample(uint32_t now)
+static void ui_cal_apply(int32_t counts, uint32_t now)
 {
-    const char *error = measurement_error(now, false);
-    if (error != NULL) { ui_result(error, now); return; }
     if (ui.page == UI_CAL_EMPTY) {
         ui.calibration = saved_config;
-        ui.calibration.zero_counts = average_counts();
+        ui.calibration.zero_counts = counts;
         ui.calibration.point_count = 0;
         memset(ui.calibration.spans, 0, sizeof(ui.calibration.spans));
         memset(ui.calibration.grams, 0, sizeof(ui.calibration.grams));
         ui.cal_index = 0;
         ui_cal_next_mass(); return;
     }
-    ui.calibration.spans[ui.cal_index] = average_counts() - ui.calibration.zero_counts;
-    ui.calibration.point_count = ui.cal_index + 1U;
-    if (!scale_config_valid(&ui.calibration)) { ui_message("SPAn", false, now); return; }
-    if (ui.calibration.point_count < ui.cal_count) {
-        ++ui.cal_index; ui_cal_next_mass(); return;
+    if (ui.page!=UI_CAL_VERIFY) {
+        ui.calibration.spans[ui.cal_index] = counts - ui.calibration.zero_counts;
+        ui.calibration.point_count = ui.cal_index + 1U;
+        if (!scale_config_valid(&ui.calibration)) { ui_message("SPAn", false, now); return; }
+        if (ui.calibration.point_count < ui.cal_count) {
+            ++ui.cal_index; ui_cal_next_mass(); return;
+        }
+        ui.page=UI_CAL_VERIFY; return; /* 卸载回零确认后才保存，防止错误零点被当成成功。 */
     }
-    if (!save_settings(&ui.calibration)) { ui_message("FLASH", false, now); return; }
+    int32_t shift=counts-ui.calibration.zero_counts;
+    int64_t span=ui.calibration.spans[0];if(span<0){span=-span;}
+    int64_t distance=shift<0?-(int64_t)shift:shift;
+    if(distance*ui.calibration.grams[0]*5>span){ui_message("drFt",false,now);return;}
+    /* 调整只作用于提交副本，Flash失败重试仍与本轮最初空秤比较。 */
+    ScaleConfig candidate=ui.calibration;
+    for(unsigned i=0;i<candidate.point_count;++i){candidate.spans[i]-=shift;}
+    candidate.zero_counts=counts;
+    if(!scale_config_valid(&candidate)){ui_message("SPAn",false,now);return;}
+    if (!save_settings(&candidate)) { ui_message("FLASH", false, now); return; }
     startup_zero_pending = false;
     zero_counts = saved_config.zero_counts;
     reference_grams = saved_config.grams[saved_config.point_count - 1U];
     zero_set = true; empty_reference_known = true; empty_candidate = false; tare_counts = 0;
     ui.page = UI_WEIGH;
-    sample_reset();
+    filter_seed(counts,now);
     ui_message("SAvEd", true, now);
 }
 
 static void ui_event(KeyEvent event, uint32_t now)
 {
     idle_since_ms = now;
+    if(capture.kind!=MEASURE_NONE){
+        capture.kind=MEASURE_NONE;
+        if(ui.page==UI_WEIGH){ui_message("donE",true,now);return;}
+    }
     buzzer_start(1, now);
     ui.message = NULL;
     if (ui.page == UI_WEIGH) {
         if (event == KEY_MENU) { ui.page = UI_MENU; ui.menu = MENU_UNTARE; }
-        else if (event == KEY_HOLD) { ui_result(set_zero(now), now); }
-        else if (event == KEY_TAP) { ui_result(set_tare(now), now); }
+        else if (event == KEY_HOLD) { measurement_request(MEASURE_ZERO,now); }
+        else if (event == KEY_TAP) { measurement_request(MEASURE_TARE,now); }
         else {
             ScaleConfig candidate = saved_config; candidate.unit ^= 1U;
             if (save_settings(&candidate)) { ui_message(candidate.unit ? "kg" : "g", true, now); }
@@ -230,8 +244,8 @@ static void ui_event(KeyEvent event, uint32_t now)
     } else if (ui.page == UI_CAL_COUNT) {
         if (event == KEY_TAP) { ui.cal_count = ui.cal_count % 3U + 1U; }
         else { ui.page = UI_CAL_EMPTY; }
-    } else if (ui.page == UI_CAL_EMPTY || ui.page == UI_CAL_LOAD) {
-        if (event == KEY_HOLD) { ui_cal_sample(now); }
+    } else if (ui.page == UI_CAL_EMPTY || ui.page == UI_CAL_LOAD || ui.page==UI_CAL_VERIFY) {
+        if (event == KEY_HOLD) { measurement_request(MEASURE_CAL,now); }
     } else if (ui.page == UI_CONFIRM_CLEAR && event == KEY_HOLD) {
         ScaleConfig candidate = saved_config;
         if (ui.menu == MENU_RESET) { scale_config_defaults(&candidate); }
@@ -284,9 +298,9 @@ static void ui_render(uint32_t now)
     ui.rendered_ms = now;
     if ((uint32_t)(now - ui.startup_ms) < 2500U) { lcd_test_all(); }
     else if ((uint32_t)(now - ui.startup_ms) < 3500U) { lcd_text("vEr", SCALE_VERSION_DISPLAY, 0x03); }
+    else if(capture.kind!=MEASURE_NONE){lcd_text("buSy","WAIT",0);}
     else if (ui.message != NULL && (uint32_t)(now - ui.message_ms) < 1200U) { lcd_text("", ui.message, 0); }
     else if (ui.page == UI_WEIGH) {
-        weight_update(now);
         switch (weight_state.status) {
         case WEIGHT_OK: lcd_weight(weight_state.display_mg, saved_config.unit != 0U, weight_state.stable, tare_counts != 0); break;
         case WEIGHT_UNCALIBRATED: lcd_text("CAL", "noCAL", 0); break;
@@ -326,7 +340,7 @@ static void ui_render(uint32_t now)
         if (now / 300U % 2U == 0U) { text[selected] = ' '; }
         lcd_text(titles[ui.edit_kind], text, 0);
     } else if (ui.page == UI_CAL_COUNT) { lcd_number("CAL", (int32_t)ui.cal_count, 0); }
-    else if (ui.page == UI_CAL_EMPTY) { lcd_text(stable && samples_ready(now) ? "S" : "", "ZERO", 0); }
+    else if (ui.page == UI_CAL_EMPTY || ui.page==UI_CAL_VERIFY) { lcd_text(ui.page==UI_CAL_VERIFY ? "End" : stable && samples_ready(now) ? "S" : "", "ZERO", 0); }
     else if (ui.page == UI_CAL_LOAD) {
         char title[5] = {'C',(char)('1' + ui.cal_index), 'g', stable && samples_ready(now) ? 'S' : ' ',0};
         lcd_number(title, (int32_t)ui.calibration.grams[ui.cal_index], 0);

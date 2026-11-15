@@ -89,6 +89,15 @@ static void storage_checks(void)
     memset(host_flash, 0xff, sizeof(host_flash));
 }
 
+static void finish_capture(int32_t counts, uint32_t *now)
+{
+    host_gpio_b.IDR=KEY_PIN;
+    for(unsigned i=0;i<210U && capture.kind!=MEASURE_NONE;++i){
+        *now+=100;sample_add(counts,*now);measurement_poll(*now);
+    }
+    assert(capture.kind==MEASURE_NONE);
+}
+
 static void settle(int32_t counts, uint32_t *now)
 {
     for (unsigned i = 0; i < 18; ++i) { *now += 100U; sample_add(counts, *now); }
@@ -103,7 +112,7 @@ static void key_time(bool pressed, unsigned milliseconds, int32_t counts, uint32
     for (unsigned i = 0; i < milliseconds; ++i) {
         ++*now;
         if (*now % 100U == 0U) { sample_add(counts, *now); }
-        key_poll(*now);
+        key_poll(*now); measurement_poll(*now);
     }
 }
 
@@ -121,7 +130,7 @@ static void local_calibration(uint32_t *now, int direction, unsigned points)
     assert(ui.page == UI_CAL_EMPTY);
     settle(100000, now);
     unsigned before = flash_program_count;
-    ui_event(KEY_HOLD, *now);
+    ui_event(KEY_HOLD, *now); finish_capture(100000,now);
     assert(ui.page == UI_EDIT && ui.edit_kind == EDIT_MASS);
     static const uint32_t grams[] = {500,2500,5000};
     for (unsigned i = 0; i < points; ++i) {
@@ -129,21 +138,25 @@ static void local_calibration(uint32_t *now, int direction, unsigned points)
         ui_event(KEY_HOLD, *now);
         assert(ui.page == UI_CAL_LOAD);
         settle(100000 + direction * (int32_t)(grams[i] * 1000U), now);
-        ui_event(KEY_HOLD, *now);
+        ui_event(KEY_HOLD, *now);finish_capture(100000 + direction * (int32_t)(grams[i] * 1000U),now);
         if (i + 1U != points) { assert(flash_program_count == before && ui.page == UI_EDIT); }
     }
+    assert(ui.page==UI_CAL_VERIFY && flash_program_count==before);
+    ui_event(KEY_HOLD,*now);finish_capture(100000,now);
     assert(ui.page == UI_WEIGH && saved_config.point_count == points);
     assert(saved_config.spans[points - 1U] == direction * (int32_t)(grams[points - 1U] * 1000U));
 }
 
 #include "completion.inc"
 #include "stability.inc"
+#include "accuracy.inc"
 
 int main(void)
 {
     watchdog_start();
     assert(host_dbg_clock_enabled && host_iwdg_frozen && watchdog_ready);
     watchdog_ready = false;
+    host_gpio_b.IDR=KEY_PIN;
     storage_checks();
     /* 用旧布局构造真实 V1 记录，验证刷新周期字段升级不会丢失旧标定。 */
     ScaleConfig legacy;
@@ -176,7 +189,7 @@ int main(void)
     /* 中途退出新标定：原有 Flash、运行时零点与三点曲线完整保留。 */
     unsigned writes = flash_program_count;
     open_item(MENU_CAL, now); ui_event(KEY_HOLD, now);
-    settle(200000, &now); ui_event(KEY_HOLD, now);
+    settle(200000, &now); ui_event(KEY_HOLD, now); finish_capture(200000,&now);
     assert(ui.page == UI_EDIT && ui.calibration.zero_counts == 200000);
     ui_event(KEY_MENU, now);
     assert(ui.page == UI_MENU && flash_program_count == writes);
@@ -186,7 +199,7 @@ int main(void)
     open_item(MENU_CAL, now); ui_event(KEY_HOLD, now);
     sample_reset(); ui_event(KEY_HOLD, now);
     assert(ui.page == UI_CAL_EMPTY && flash_program_count == writes);
-    ui.page = UI_WEIGH;
+    ui_event(KEY_MENU,now);ui.page = UI_WEIGH;
     assert(strcmp(set_tare(now), "ERR,WAIT_SAMPLES\r\n") == 0);
 
     /* 非线性曲线先分别换算毛重与皮重，再求净重。 */
@@ -197,8 +210,8 @@ int main(void)
     saved_config = recovered; tare_counts = 0;
     settle(99500, &now);
     assert(weight_state.net_mg == 500 && weight_state.display_mg == 500);
-    assert(strcmp(set_zero(now), "ERR,NOT_EMPTY\r\n") == 0);
-    assert(zero_counts == 100000);
+    assert(strcmp(set_zero(now), "OK,ZERO\r\n") == 0);
+    assert(zero_counts==99500);zero_counts=100000;
     settle(100000, &now);
     sample_add(-8000000, ++now);
     assert(stable && filtered_counts() == 100000);
@@ -219,7 +232,7 @@ int main(void)
     assert(tare_counts == 0);
     key_time(true, 500, -20000, &now); key_time(false, 400, -20000, &now);
     assert(saved_config.unit == 1 && tare_counts == 0);
-    key_time(true, 100, -20000, &now); key_time(false, 400, -20000, &now);
+    key_time(true, 100, -20000, &now); key_time(false, 400, -20000, &now);finish_capture(-20000,&now);
     assert(tare_counts == -120000);
     /* 持续三秒不提前归零，释放后进入菜单。 */
     key_time(true, 3200, 100000, &now);
@@ -227,11 +240,11 @@ int main(void)
     key_time(false, 40, 100000, &now);
     assert(ui.page == UI_MENU && tare_counts == -120000);
     ui_event(KEY_DOUBLE, now);
-    key_time(true, 1700, 100000, &now); key_time(false, 400, 100000, &now);
+    key_time(true, 1700, 100000, &now); key_time(false, 400, 100000, &now);finish_capture(100000,&now);
     assert(tare_counts == 0 && zero_counts == 100000 && ui.page == UI_WEIGH);
 
     /* 毛重限制不能被去皮绕过，移走容器显示负数。 */
-    settle(-2900000, &now); ui_event(KEY_TAP, now);
+    settle(-2900000, &now); ui_event(KEY_TAP, now);finish_capture(-2900000,&now);
     settle(-4901000, &now); assert(weight_state.status == WEIGHT_RANGE);
     assert(strcmp(set_tare(now), "ERR,OVERLOAD\r\n") == 0);
     settle(-5150000, &now); assert(weight_state.status == WEIGHT_OVERLOAD);
@@ -330,11 +343,12 @@ int main(void)
      * 20g只是标定点，量程仍为5000g；小质量输入不显示前导零。
      */
     open_item(MENU_CAL,now); assert(ui.cal_count==1);
-    ui_event(KEY_HOLD,now); settle(100000,&now); ui_event(KEY_HOLD,now);
+    ui_event(KEY_HOLD,now); settle(100000,&now); ui_event(KEY_HOLD,now);finish_capture(100000,&now);
     assert(ui.page==UI_EDIT && ui.edit_kind==EDIT_MASS && ui.value==20);
     ui.startup_ms=now-4000U; ui.message=NULL; ui.rendered_ms=now-200U;
     ui_render(now); assert(frame[12]==0 && frame[13]==0); /* 第三位为空 */
-    ui_event(KEY_HOLD,now); settle(120000,&now); ui_event(KEY_HOLD,now);
+    ui_event(KEY_HOLD,now); settle(120000,&now); ui_event(KEY_HOLD,now);finish_capture(120000,&now);
+    assert(ui.page==UI_CAL_VERIFY);ui_event(KEY_HOLD,now);finish_capture(100000,&now);
     assert(ui.page==UI_WEIGH && saved_config.point_count==1 && saved_config.grams[0]==20);
     assert(saved_config.spans[0]==20000 && reference_grams==20 && MAX_GROSS_GRAMS==5000);
     assert(scale_config_load(&recovered) && recovered.grams[0]==20);
@@ -348,6 +362,7 @@ int main(void)
     assert(saved_config.point_count==0 && reference_grams==0 && ui.page==UI_WEIGH);
     stability_checks();
     completion_checks();
+    accuracy_checks();
     printf("PASS: physical key debounce/double/long/wake; local menus and atomic 1/2/3-point calibration;\n");
     printf("      LCD digits/decimal/sign; persistent settings and V1 migration; all partial-page cutoffs;\n");
     printf("      small-load preservation, gross overload, negative net, standby, recovery and tick wrap.\n");

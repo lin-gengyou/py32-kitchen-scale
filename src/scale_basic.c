@@ -29,8 +29,8 @@
 
 /* 联调默认值。稳定阈值按 ADC 计数设置，量程和实际精度需要实物确认。 */
 enum {
-    AVERAGE_SAMPLES = 8,          /* 稳定时平均 8 点，降低显示抖动。 */
-    FAST_SAMPLES = 3,             /* 变化时平均最近 3 点，缩短跟随延迟。 */
+    AVERAGE_SAMPLES = 8,          /* 连续8点去极值均值，稳定/变化时使用相同滤波。 */
+    FAST_SAMPLES = 3,             /* 中值预滤波及最少有效样本数。 */
     HX711_STARTUP_MS = 500,       /* 给上电后的 HX711 留出建立时间。 */
     HX711_TIMEOUT_MS = 1000,      /* 连续 1 秒无有效采样即报告故障。 */
     STABLE_HOLD_MS = 500,         /* 整个窗口持续满足阈值 500ms 才算稳定。 */
@@ -56,7 +56,6 @@ typedef enum {
 
 /* 采样环形缓冲区。24 位计数的 8 点累加仍在 int32_t 范围内。 */
 static int32_t samples[AVERAGE_SAMPLES];
-static int32_t sample_sum;
 static uint8_t sample_count;
 static uint8_t sample_index;
 static uint32_t started_ms;
@@ -99,9 +98,24 @@ static bool sleeping;
 static IWDG_HandleTypeDef watchdog;
 static bool watchdog_ready;
 
+/* 本机测量在松手后等待800ms，再采16个新读数，避免把按键施力写入零点。 */
+typedef enum { MEASURE_NONE, MEASURE_TARE, MEASURE_ZERO, MEASURE_CAL } MeasurementKind;
+static struct {
+    MeasurementKind kind;
+    uint32_t started, released, stamp;
+    int32_t data[16];
+    unsigned count;
+} capture;
+static void measurement_request(MeasurementKind kind, uint32_t now);
+static void measurement_poll(uint32_t now);
+static int32_t trimmed_mean(const int32_t *data, unsigned count, uint32_t *spread);
+
+
 static void weight_update(uint32_t now);
 static void wake_scale(uint32_t now);
 static void enter_standby(void);
+static const char *zero_at(int32_t counts, uint32_t now);
+static const char *tare_at(int32_t counts, uint32_t now);
 
 
 /* 设置输出初值后再切换方向，降低上电误触发蜂鸣器和显示片选的概率。 */
@@ -175,7 +189,6 @@ static void sample_reset(void)
 {
     sample_count = 0;
     sample_index = 0;
-    sample_sum = 0;
     settling = false;
     stable = false;
     raw_count = 0;
@@ -221,34 +234,20 @@ static void sample_add(int32_t counts, uint32_t now)
     if (a > b) { int32_t swap = a; a = b; b = swap; }
     if (b > c) { b = c; }
     counts = a > b ? a : b;
-    if (sample_count == AVERAGE_SAMPLES) {
-        sample_sum -= samples[sample_index];
-    } else {
-        ++sample_count;
-    }
+    if (sample_count < AVERAGE_SAMPLES) { ++sample_count; }
     samples[sample_index] = counts;
-    sample_sum += counts;
     sample_index = (sample_index + 1U) % AVERAGE_SAMPLES;
 
-    int32_t minimum = samples[0];
-    int32_t maximum = samples[0];
-    for (unsigned i = 1; i < sample_count; ++i) {
-        if (samples[i] < minimum) {
-            minimum = samples[i];
-        }
-        if (samples[i] > maximum) {
-            maximum = samples[i];
-        }
-    }
-    uint32_t limit = stability_limit();
-    uint32_t spread = (uint32_t)(maximum - minimum);
+    if(sample_count<AVERAGE_SAMPLES){settling=false;stable=false;return;}
+    uint32_t spread,limit=stability_limit();
+    int32_t mean=trimmed_mean(samples,sample_count,&spread);
     if (stable) {
-        int32_t shift = sample_sum / AVERAGE_SAMPLES - stable_anchor;
+        int32_t shift = mean - stable_anchor;
         if (shift < 0) { shift = -shift; }
         if (spread <= limit * 2U && (uint32_t)shift <= limit) { return; }
         settling = false; stable = false; return;
     }
-    if (sample_count < AVERAGE_SAMPLES || spread > limit) {
+    if (spread > limit) {
         settling = false;
         stable = false;
         return;
@@ -258,7 +257,7 @@ static void sample_add(int32_t counts, uint32_t now)
         stable_since_ms = now;
     }
     stable = (uint32_t)(now - stable_since_ms) >= STABLE_HOLD_MS;
-    if (stable) { stable_anchor = sample_sum / AVERAGE_SAMPLES; }
+    if (stable) { stable_anchor = mean; }
 }
 
 /* 查询数据就绪脚，有新结果就读取，实际采样速度取决于 HX711 的 RATE 硬件。 */
@@ -298,25 +297,21 @@ static bool samples_ready(uint32_t now)
            (uint32_t)(now - last_sample_ms) < HX711_TIMEOUT_MS;
 }
 
-/* 校准、归零、去皮统一使用完整 8 点平均，保持偏移和换算系数一致。 */
-static int32_t average_counts(void)
+/* 固定窗口去掉一个最高和最低值；显示不再随S切换3/8点两套均值。
+ * 思路参考HX711_ADC的去极值滑动均值，保持整数mg计算与连续更新。
+ */
+__attribute__((noinline,noclone))
+static int32_t trimmed_mean(const int32_t *data, unsigned count, uint32_t *spread)
 {
-    return sample_sum / sample_count;
-}
-
-/* 不稳定时使用最近 3 点平均，稳定后切回 8 点平均。仅在窗口完整时调用。 */
-static int32_t filtered_counts(void)
-{
-    if (stable) {
-        return average_counts();
+    int32_t sum=0,low=INT32_MAX,high=INT32_MIN;
+    for(unsigned i=0;i<count;++i){
+        int32_t v=data[i];sum+=v;if(v<low){low=v;}if(v>high){high=v;}
     }
-    int32_t total = 0;
-    for (unsigned i = 0; i < FAST_SAMPLES; ++i) {
-        unsigned index = (sample_index + AVERAGE_SAMPLES - 1U - i) % AVERAGE_SAMPLES;
-        total += samples[index];
-    }
-    return total / FAST_SAMPLES;
+    if(spread!=NULL){*spread=(uint32_t)(high-low);}
+    return (sum-low-high)/(int32_t)(count-2U);
 }
+static int32_t average_counts(void) { return trimmed_mean(samples,sample_count,NULL); }
+static int32_t filtered_counts(void) { return average_counts(); }
 
 /* 标定点以空载为原点。选择相邻分段插值，负重量和末段以对应斜率外推。 */
 static int64_t gross_milligrams(int32_t counts)
@@ -399,14 +394,21 @@ static const char *set_zero(uint32_t now)
     if (error != NULL) {
         return error;
     }
-    /* 已标定时只能在原空秤基线附近归零，防止抹掉 0.5g 等真实小负载。 */
+    return zero_at(average_counts(), now);
+}
+
+static const char *zero_at(int32_t counts, uint32_t now)
+{
+    /* 长按明确确认空秤后，手动归零允许修正量程2%内偏移。
+     * 普通称重的自动追零仍限制±0.1g，0.5g负载不会被自动吞掉。
+     */
     if (reference_grams != 0U) {
-        int64_t gross = gross_milligrams(average_counts());
-        if (gross < -100 || gross > 100) {
+        int64_t gross = gross_milligrams(counts);
+        if (gross < -100000 || gross > 100000) {
             return "ERR,NOT_EMPTY\r\n";
         }
     }
-    zero_counts = average_counts();
+    zero_counts = counts;
     startup_zero_pending = false;
     zero_set = true;
     empty_reference_known = true;
@@ -426,7 +428,10 @@ static const char *set_tare(uint32_t now)
     if (error != NULL) {
         return error;
     }
-    int32_t counts = average_counts();
+    return tare_at(average_counts(), now);
+}
+static const char *tare_at(int32_t counts, uint32_t now)
+{
     tare_counts = counts - zero_counts;
     empty_candidate = false;
     filter_seed(counts, now);
@@ -493,6 +498,8 @@ static uint16_t select_division(int32_t net_mg)
 /* 更新唯一重量状态。量化放在最后，负净重保留；没有低于 2g 强制归零逻辑。 */
 static void weight_update(uint32_t now)
 {
+    WeightStatus previous_status=weight_state.status;
+    uint16_t previous_division=weight_state.division_mg;
     weight_state.unit = saved_config.unit;
     const BatteryState *power = battery_state();
     weight_state.battery_percent = power->percent;
@@ -545,7 +552,13 @@ static void weight_update(uint32_t now)
     weight_state.division_mg = select_division((int32_t)net);
     int64_t magnitude = net < 0 ? -net : net;
     int64_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
-    weight_state.display_mg = net < 0 ? -(int32_t)rounded : (int32_t)rounded;
+    int64_t display_delta=net-weight_state.display_mg;
+    if (display_delta<0) { display_delta=-display_delta; }
+    /* 半分度附近加1/4分度滞回，抑制1.4/1.5来回跳；0.5g真实变化照常更新。 */
+    if (previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
+        display_delta*4 >= weight_state.division_mg*3U) {
+        weight_state.display_mg = net < 0 ? -(int32_t)rounded : (int32_t)rounded;
+    }
     weight_state.stable = stable;
     weight_state.status = WEIGHT_OK;
     if (stable) {
@@ -558,7 +571,7 @@ static void weight_update(uint32_t now)
 /* 软件待机关闭段码屏、HX711 和 LED；按键轮询和毫秒时基负责唤醒。 */
 static void enter_standby(void)
 {
-    sleeping = true;
+    sleeping = true; capture.kind=MEASURE_NONE;
     lcd_power(false);
     sample_reset();
     HAL_GPIO_WritePin(HX711_PORT, HX711_CLOCK_PIN, GPIO_PIN_SET);
@@ -621,8 +634,9 @@ static void power_poll(uint32_t now)
     }
     weight_state.motion = MOTION_EMPTY;
     if ((uint32_t)(now - zero_track_ms) >= 1000U) {
-        /* 每秒只修正偏差的 1/64，跟踪量留在 RAM，避免频繁擦写 Flash。 */
-        zero_counts += (average_counts() - zero_counts) / 64;
+        /* 确认空载3秒后缓慢追零；1/4避免旧版/64在小于64计数时永远截断为0。 */
+        int32_t step=(average_counts()-zero_counts)/4;
+        zero_counts+=step;stable_anchor+=step;
         zero_track_ms = now;
     }
     if (saved_config.auto_off_seconds != 0U &&
@@ -660,15 +674,51 @@ static void watchdog_start(void)
 /* 本机界面直接复用上述测量与存储逻辑。 */
 #include "scale_ui.inc"
 
+/* 非阻塞采集；只收松手后新样本，去掉一个最高/最低，检验离散度与前后半段漂移。 */
+static void measurement_request(MeasurementKind kind, uint32_t now)
+{
+    if (kind==MEASURE_TARE && reference_grams==0U) { ui_result("ERR,NEED_CAL\r\n",now); return; }
+    capture.kind=kind;capture.started=capture.released=now;capture.stamp=last_sample_ms;capture.count=0;
+    ui.message=NULL;
+}
+static void measurement_poll(uint32_t now)
+{
+    if (capture.kind==MEASURE_NONE) { return; }
+    if ((uint32_t)(now-capture.started)>20000U) {
+        capture.kind=MEASURE_NONE;ui_result("ERR,UNSTABLE\r\n",now);return;
+    }
+    if ((KEY_PORT->IDR&KEY_PIN)==0U) { capture.released=now;capture.count=0; }
+    if ((uint32_t)(now-capture.released)<800U || !samples_ready(now)) {
+        capture.count=0;capture.stamp=last_sample_ms;return;
+    }
+    if (capture.stamp==last_sample_ms) { return; } capture.stamp=last_sample_ms;
+    capture.data[capture.count++]=latest_raw;
+    if(capture.count<16U){return;}
+    uint32_t spread,limit=stability_limit();
+    int32_t mean=trimmed_mean(capture.data,16,&spread),trend=0;
+    for(unsigned i=0;i<8;++i){trend+=capture.data[i]-capture.data[i+8U];}
+    if(trend<0){trend=-trend;}
+    if(spread>limit*2U || (uint32_t)trend>limit*4U){capture.count=0;return;}
+    MeasurementKind kind=capture.kind;capture.kind=MEASURE_NONE;
+    if(saved_config.battery_profile!=0U && !battery_state()->valid){ui_result("ERR,POWER\r\n",now);return;}
+    if(saved_config.battery_profile!=0U && battery_state()->status>=BATTERY_LOW){ui_result("ERR,POWER\r\n",now);return;}
+    if(kind==MEASURE_CAL){ui_cal_apply(mean,now);return;}
+    const char *result;
+    if(reference_grams!=0U && gross_milligrams(mean)>(int64_t)MAX_GROSS_GRAMS*1000){result="ERR,OVERLOAD\r\n";}
+    else{result=kind==MEASURE_ZERO?zero_at(mean,now):tare_at(mean,now);}
+    ui_result(result,now);
+}
+
+
 /* 远端和板上按键调用同一测量函数。标定过程拒绝远端改皮重。 */
 static bool local_calibrating(void)
 {
-    return ui.page == UI_CAL_COUNT || ui.page == UI_CAL_EMPTY || ui.page == UI_CAL_LOAD ||
+    return ui.page == UI_CAL_COUNT || ui.page == UI_CAL_EMPTY || ui.page == UI_CAL_LOAD || ui.page==UI_CAL_VERIFY ||
         (ui.page == UI_EDIT && ui.edit_kind == EDIT_MASS);
 }
 const char *scale_remote_tare(uint32_t now)
 {
-    if (local_calibrating()) { return "ERR,BUSY\r\n"; }
+    if (local_calibrating() || capture.kind!=MEASURE_NONE) { return "ERR,BUSY\r\n"; }
     idle_since_ms = now; if (sleeping) { wake_scale(now); }
     const char *result = set_tare(now); ui_result(result, now); return result;
 }
@@ -712,11 +762,11 @@ int main(void)
         battery_poll(now, sleeping);
         sample_poll(now);
         key_poll(now);
+        measurement_poll(now);
         if ((uint32_t)(now - power_ms) >= 10U) {
             power_ms = now;
-            weight_update(now);
             if (ui.page == UI_WEIGH) { power_poll(now); alarm_poll(now); }
-            else { idle_since_ms = now; empty_candidate = false; }
+            else { weight_update(now); idle_since_ms = now; empty_candidate = false; }
         }
         buzzer_poll(now);
         if (!sleeping && (uint32_t)(now - led_ms) >= 500U) {
@@ -725,6 +775,7 @@ int main(void)
         }
         ui_render(now);
         if (local_calibrating()) { weight_state.status = WEIGHT_CALIBRATING; weight_state.stable = false; }
+        else if(capture.kind!=MEASURE_NONE){weight_state.status=WEIGHT_WAIT;weight_state.stable=false;}
         ble_poll(now, &weight_state, display_interval_ms);
         if (sleeping) {
             __WFI();
