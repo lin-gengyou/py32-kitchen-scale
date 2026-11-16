@@ -76,6 +76,7 @@ static bool sample_fault;
 static bool adc_saturated;
 static bool settling;
 static bool stable;
+static bool display_locked;     /* 数值保持独立于S，微波动引起S重判时仍保留旧读数。 */
 static uint32_t stable_since_ms;
 static uint32_t stable_counts = DEFAULT_STABLE_COUNTS;
 static int32_t stable_anchor;
@@ -202,6 +203,7 @@ static void sample_reset(void)
     sample_index = 0;
     settling = false;
     stable = false;
+    display_locked = false;
     weight_state.stable = false; /* 同时撤销上一轮显示锁定，恢复后重新取值。 */
     raw_count = 0;
     raw_index = 0;
@@ -461,6 +463,7 @@ static const char *zero_at(int32_t counts, uint32_t now)
     empty_reference_known = true;
     empty_candidate = false;
     tare_counts = 0;
+    display_locked = false;
     weight_state.stable = false; /* 手动归零立即以新零点重新锁定。 */
     weight_update(now);
     return "OK,ZERO\r\n";
@@ -548,7 +551,8 @@ static void weight_update(uint32_t now)
 {
     WeightStatus previous_status=weight_state.status;
     uint16_t previous_division=weight_state.division_mg;
-    bool held=weight_state.stable;
+    bool held=display_locked;
+    display_locked=false; /* 所有等待/故障出口均撤销保持。 */
     weight_state.unit = saved_config.unit;
     const BatteryState *power = battery_state();
     weight_state.battery_percent = power->percent;
@@ -595,7 +599,13 @@ static void weight_update(uint32_t now)
         return;
     }
     weight_state.motion = net < weight_state.net_mg ? MOTION_UNLOADING : MOTION_LOADING;
-    held = held && stable && weight_state.tare_mg == (int32_t)tare;
+    int64_t display_delta=net-weight_state.display_mg;
+    if (display_delta<0) { display_delta=-display_delta; }
+    uint32_t hold_band=weight_state.division_mg*2U;
+    if (hold_band<400U) { hold_band=400U; }
+    bool at_zero=stable && (uint32_t)net+200U<=400U;
+    held = held && weight_state.tare_mg == (int32_t)tare && display_delta<hold_band &&
+        (!at_zero || weight_state.display_mg==0);
     weight_state.gross_mg = (int32_t)gross;
     weight_state.tare_mg = (int32_t)tare;
     weight_state.net_mg = (int32_t)net;
@@ -603,16 +613,15 @@ static void weight_update(uint32_t now)
         weight_state.division_mg = select_division((int32_t)net);
         int64_t magnitude = net < 0 ? -net : net;
         /* 稳定净重在±0.2g内显示0.0；0.5g及以上负载仍可触发解锁。 */
-        if (stable && magnitude <= 200) { net=0; magnitude=0; }
+        if (at_zero) { net=0; magnitude=0; }
         int64_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
-        int64_t display_delta=net-weight_state.display_mg;
-        if (display_delta<0) { display_delta=-display_delta; }
         /* 动态阶段保留3/4分度滞回；进入稳定时按最新均值取整并锁定。 */
         if (stable || previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
             display_delta*4 >= weight_state.division_mg*3U) {
             weight_state.display_mg = net < 0 ? -(int32_t)rounded : (int32_t)rounded;
         }
     }
+    display_locked=held || stable;
     weight_state.stable = stable;
     weight_state.status = WEIGHT_OK;
     if (stable) {

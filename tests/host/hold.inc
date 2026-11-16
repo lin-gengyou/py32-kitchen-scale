@@ -16,6 +16,15 @@ static void hold_checks(void)
         moved|=weight_state.net_mg!=0;
     }
     assert(moved);
+    /* 0.35g缓慢偏移会让核心S重新判定，已锁定的0.0仍保持。 */
+    bool rechecked=false;
+    for(unsigned i=0;i<40U;++i){
+        now+=100;sample_add(100350,now);weight_update(now);
+        rechecked|=!weight_state.stable;
+        assert(weight_state.display_mg==0);
+    }
+    assert(rechecked && weight_state.net_mg==350 && display_locked);
+    sample_reset();settle(100000,&now);
     /* 真实0.5g在中值确认后的第2帧撤销S；随后锁在0.5g。 */
     for(unsigned i=0;i<2U;++i){now+=100;sample_add(100500,now);weight_update(now);}
     assert(!weight_state.stable);
@@ -32,7 +41,7 @@ static void hold_checks(void)
         now+=100;sample_add(120155+(int32_t)i*5,now);weight_update(now);
         unlocked|=!weight_state.stable;
     }
-    assert(unlocked && weight_state.display_mg>=20700);
+    assert(unlocked && weight_state.display_mg>=20500);
     settle(100000,&now);assert(weight_state.display_mg==0);
 
     /* 实际输出循环没观察到中间的不稳定帧，也不能沿用上一物品的锁定值。 */

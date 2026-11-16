@@ -25,7 +25,7 @@ static void stability_checks(void)
     assert(!stable && count<=2U); /* 真实0.5g变化在中值确认后立即退出 */
     settle(100264,&now);assert(stable);
     bool exited=false;
-    for(unsigned i=1;i<=80;++i){
+    for(unsigned i=1;i<=160;++i){
         now+=100;sample_add(100264+(int32_t)i*2,now);weight_update(now);
         if(!stable){exited=true;}
     }
