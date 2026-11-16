@@ -153,6 +153,7 @@ static void local_calibration(uint32_t *now, int direction, unsigned points)
 #include "completion.inc"
 #include "stability.inc"
 #include "accuracy.inc"
+#include "hold.inc"
 #include "replay.inc"
 
 int main(void)
@@ -368,6 +369,7 @@ int main(void)
     stability_checks();
     completion_checks();
     accuracy_checks();
+    hold_checks();
     replay_checks();
     printf("PASS: physical key debounce/double/long/wake; local menus and atomic 1/2/3-point calibration;\n");
     printf("      LCD digits/decimal/sign; persistent settings and V1 migration; all partial-page cutoffs;\n");

@@ -51,9 +51,9 @@ static void accuracy_checks(void)
     for(unsigned i=0;i<1300;++i){now+=100;sample_add(104340,now);power_poll(now);}
     assert(zero_counts==tracked && weight_state.display_mg==500);
 
-    /* 150mg附近的真实微噪声不会让0.1/0.2g来回跳，0.5g新负载照常响应。 */
-    settle(zero_counts+140,&now);assert(weight_state.display_mg==100);
-    for(unsigned i=0;i<100;++i){now+=100;sample_add(zero_counts+(i%2?145:155),now);weight_update(now);assert(weight_state.display_mg==100);}
+    /* 近零稳定后固定为0.0，150mg附近噪声保持0，0.5g新负载照常响应。 */
+    settle(zero_counts+140,&now);assert(weight_state.display_mg==0);
+    for(unsigned i=0;i<100;++i){now+=100;sample_add(zero_counts+(i%2?145:155),now);weight_update(now);assert(weight_state.display_mg==0);}
     settle(zero_counts+500,&now);assert(weight_state.display_mg==500);
     stable=false;int32_t a=filtered_counts();stable=true;assert(filtered_counts()==a); /* 不再切换均值。 */
     const int32_t negative[]={-100,-101,-102,-103,-104};

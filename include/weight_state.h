@@ -32,7 +32,7 @@ typedef struct {
     int32_t net_mg;              /* 未应用显示分度的净重。 */
     int32_t gross_mg;            /* 包含容器的毛重。 */
     int32_t tare_mg;             /* 皮重。 */
-    int32_t display_mg;          /* 最后取整后的显示重量。 */
+    int32_t display_mg;          /* 屏幕/BLE共用重量；稳定时锁定，变化时重新取整。 */
     uint32_t sequence;           /* 发送重量帧的序号。 */
     uint32_t unit;               /* 0 为 g，1 为 kg，内部值始终以 mg 表示。 */
     uint16_t division_mg;        /* 当前分度，100/500/1000mg。 */

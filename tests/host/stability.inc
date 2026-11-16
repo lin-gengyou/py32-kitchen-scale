@@ -1,4 +1,4 @@
-/* 传感器噪声、真实阶跃与慢加料分别覆盖，S的保持不能靠冻结重量实现。 */
+/* S期间保持显示值；传感器采样与变化检测继续，覆盖噪声、阶跃和慢加料。 */
 static void stability_checks(void)
 {
     uint32_t now=0;
@@ -19,7 +19,7 @@ static void stability_checks(void)
         int32_t n=i%20U<3U ? 70 : i%20U<6U ? -70 : 0;
         now+=100;sample_add(100000+n,now);weight_update(now);assert(stable);
     }
-    settle(100040,&now);assert(stable && weight_state.display_mg==100); /* S不锁住显示 */
+    settle(100040,&now);assert(stable && weight_state.net_mg>0 && weight_state.display_mg==0);
     unsigned count=0;
     while(stable && count<4U){now+=100;sample_add(100264,now);++count;}
     assert(!stable && count<=2U); /* 真实0.5g变化在中值确认后立即退出 */
@@ -43,6 +43,6 @@ static void stability_checks(void)
     assert(record_read(&record,&migrated) && migrated.stable_counts==100);
     record.version=4;record.config.stable_counts=64;record.crc=config_crc(&record,offsetof(ConfigRecord,crc));
     assert(record_read(&record,&migrated) && migrated.stable_counts==64);
-    printf("PASS: calibrated 0.2g automatic stability, exit hysteresis, live display, 0.5g step, slow ramp;\n");
+    printf("PASS: calibrated 0.2g automatic stability, exit hysteresis, held display, 0.5g step, slow ramp;\n");
     printf("      manual tolerance, uncalibrated startup, V3 default migration and V4 manual preservation.\n");
 }

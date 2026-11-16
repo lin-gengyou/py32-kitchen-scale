@@ -202,6 +202,7 @@ static void sample_reset(void)
     sample_index = 0;
     settling = false;
     stable = false;
+    weight_state.stable = false; /* 同时撤销上一轮显示锁定，恢复后重新取值。 */
     raw_count = 0;
     raw_index = 0;
 }
@@ -237,7 +238,7 @@ static uint32_t stability_limit(void)
 
 /* 进入稳定需完整8点窗口持续500ms；退出使用2倍峰峰值门限。
  * 均值相对进入时的锚点移动一个门限也退出，避免缓慢加料一直挂着S。
- * 数值仍每次采样更新，不锁死重量，不将微小负载吞成零。
+ * 稳定期间锁住显示值；内部采样继续，实际变化越过门限即解除锁定。
  */
 static void sample_add(int32_t counts, uint32_t now)
 {
@@ -271,7 +272,7 @@ static void sample_add(int32_t counts, uint32_t now)
         int32_t shift = mean - stable_anchor;
         if (shift < 0) { shift = -shift; }
         if (spread <= limit * 2U && (uint32_t)shift <= limit) { return; }
-        settling = false; stable = false; return;
+        settling = false; stable = false; weight_state.stable = false; return;
     }
     if (spread > limit) {
         settling = false;
@@ -460,6 +461,7 @@ static const char *zero_at(int32_t counts, uint32_t now)
     empty_reference_known = true;
     empty_candidate = false;
     tare_counts = 0;
+    weight_state.stable = false; /* 手动归零立即以新零点重新锁定。 */
     weight_update(now);
     return "OK,ZERO\r\n";
 }
@@ -541,11 +543,12 @@ static uint16_t select_division(int32_t net_mg)
     return 100;
 }
 
-/* 更新唯一重量状态。量化放在最后，负净重保留；没有低于 2g 强制归零逻辑。 */
+/* 内部毛重/净重继续更新。S期间保持同一显示值，动作和故障可解除锁定。 */
 static void weight_update(uint32_t now)
 {
     WeightStatus previous_status=weight_state.status;
     uint16_t previous_division=weight_state.division_mg;
+    bool held=weight_state.stable;
     weight_state.unit = saved_config.unit;
     const BatteryState *power = battery_state();
     weight_state.battery_percent = power->percent;
@@ -592,18 +595,23 @@ static void weight_update(uint32_t now)
         return;
     }
     weight_state.motion = net < weight_state.net_mg ? MOTION_UNLOADING : MOTION_LOADING;
+    held = held && stable && weight_state.tare_mg == (int32_t)tare;
     weight_state.gross_mg = (int32_t)gross;
     weight_state.tare_mg = (int32_t)tare;
     weight_state.net_mg = (int32_t)net;
-    weight_state.division_mg = select_division((int32_t)net);
-    int64_t magnitude = net < 0 ? -net : net;
-    int64_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
-    int64_t display_delta=net-weight_state.display_mg;
-    if (display_delta<0) { display_delta=-display_delta; }
-    /* 半分度附近加1/4分度滞回，抑制1.4/1.5来回跳；0.5g真实变化照常更新。 */
-    if (previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
-        display_delta*4 >= weight_state.division_mg*3U) {
-        weight_state.display_mg = net < 0 ? -(int32_t)rounded : (int32_t)rounded;
+    if (!held) {
+        weight_state.division_mg = select_division((int32_t)net);
+        int64_t magnitude = net < 0 ? -net : net;
+        /* 稳定净重在±0.2g内显示0.0；0.5g及以上负载仍可触发解锁。 */
+        if (stable && magnitude <= 200) { net=0; magnitude=0; }
+        int64_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
+        int64_t display_delta=net-weight_state.display_mg;
+        if (display_delta<0) { display_delta=-display_delta; }
+        /* 动态阶段保留3/4分度滞回；进入稳定时按最新均值取整并锁定。 */
+        if (stable || previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
+            display_delta*4 >= weight_state.division_mg*3U) {
+            weight_state.display_mg = net < 0 ? -(int32_t)rounded : (int32_t)rounded;
+        }
     }
     weight_state.stable = stable;
     weight_state.status = WEIGHT_OK;
