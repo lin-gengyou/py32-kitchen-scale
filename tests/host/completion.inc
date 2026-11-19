@@ -130,6 +130,12 @@ static void completion_checks(void)
     settle(100000,&now);power_poll(now);assert(startup_zero_pending);
     for(unsigned i=0;i<30U;++i){now+=100;sample_add(100000,now);power_poll(now);}
     assert(!startup_zero_pending);
+    /* 重启时实机见到-2.5g的负偏，稳定后回零并保留0.5g真实载荷。 */
+    sample_reset();startup_zero_pending=true;empty_candidate=false;
+    settle(97500,&now);
+    for(unsigned i=0;i<45U;++i){now+=100;sample_add(97500,now);power_poll(now);}
+    assert(!startup_zero_pending && zero_locked && zero_counts==97500 && weight_state.display_mg==0);
+    settle(98000,&now);assert(!zero_locked && weight_state.display_mg==500);
     open_item(MENU_BLUETOOTH,now);ui.choice=0;ui_event(KEY_DOUBLE,now);
     assert(!ble_enabled && saved_config.bluetooth_enabled==0);
 

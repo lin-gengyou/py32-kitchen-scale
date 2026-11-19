@@ -96,6 +96,7 @@ static volatile uint8_t buzzer_remaining;
 static volatile bool buzzer_on;
 static uint32_t buzzer_phase_ms;
 static bool startup_zero_pending;
+#define STARTUP_ZERO_NEGATIVE_MG 5000
 
 /* 文档V1.0的持久配置与统一状态；外部供电的电池百分比使用-1。 */
 static ScaleConfig saved_config;
@@ -696,7 +697,7 @@ static void power_poll(uint32_t now)
         return;
     }
     weight_update(now);
-    int32_t lower = startup_zero_pending ? -1500 : -200;
+    int32_t lower = startup_zero_pending ? -STARTUP_ZERO_NEGATIVE_MG : -200;
     bool empty = empty_reference_known && tare_counts == 0 && weight_state.status == WEIGHT_OK &&
                  (zero_locked || (stable && weight_state.gross_mg >= lower && weight_state.gross_mg <= 200));
     if (empty && !zero_locked) {
