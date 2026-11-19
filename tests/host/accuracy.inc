@@ -57,10 +57,10 @@ static void accuracy_checks(void)
     assert(strcmp(scale_remote_tare(now),"ERR,BUSY\r\n")==0);
     finish_capture(110000,&now);assert(tare_counts==10000);
     settle(130000,&now);assert(weight_state.display_mg==20000);
-    settle(100000,&now);assert(weight_state.display_mg==-10000);
+    settle(100000,&now);assert(weight_state.net_mg==-10000 && weight_state.display_mg==0);
     tare_counts=0;
 
-    /* 人工明确确认空秤时可修正3.8g偏移，自动追零依旧保留0.5g小负载。 */
+    /* 人工明确确认空秤时可修正3.8g偏移，0.5g小负载依旧保留在内部读数。 */
     settle(105300,&now);ui_event(KEY_DOUBLE,now);finish_capture(103800,&now);
     assert(zero_counts==103800 && tare_counts==0 && weight_state.display_mg == 0);
     ScaleConfig reboot_config;
@@ -75,12 +75,12 @@ static void accuracy_checks(void)
     int32_t tracked=zero_counts;
     settle(104340,&now);
     for(unsigned i=0;i<1300;++i){now+=100;sample_add(104340,now);power_poll(now);}
-    assert(zero_counts==tracked && weight_state.display_mg==500);
+    assert(zero_counts==tracked && weight_state.net_mg>=490 && weight_state.net_mg<=510 && weight_state.display_mg==0);
 
-    /* 近零稳定后固定为0.0，150mg附近噪声保持0，0.5g新负载照常响应。 */
+    /* 近零稳定后固定为0.0，150mg附近噪声保持0，0.5g新负载保持零示值。 */
     settle(zero_counts+140,&now);assert(weight_state.display_mg==0);
     for(unsigned i=0;i<100;++i){now+=100;sample_add(zero_counts+(i%2?145:155),now);weight_update(now);assert(weight_state.display_mg==0);}
-    settle(zero_counts+500,&now);assert(weight_state.display_mg==500);
+    settle(zero_counts+500,&now);assert(weight_state.net_mg==500 && weight_state.display_mg==0);
     stable=false;int32_t a=filtered_counts();stable=true;assert(filtered_counts()==a); /* 不再切换均值。 */
     const int32_t negative[]={-100,-101,-102,-103,-104};
     assert(trimmed_mean(negative,5,NULL)==-102); /* 防止负数除以unsigned而变成巨值。 */
@@ -110,5 +110,5 @@ static void accuracy_checks(void)
     sample_fault=false;
     printf("PASS: post-release 16-sample acquisition, button force rejection, unload verification/rollback;\n");
     printf("      0/20g/0 calibration, async tare/zero/cancel/timeout, fractional zero tracking,\n");
-    printf("      quantizer hysteresis, negative signed mean, and 0.5g preservation.\n");
+    printf("      quantizer hysteresis, negative signed mean, and 0.5g raw measurement.\n");
 }

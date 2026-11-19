@@ -215,7 +215,7 @@ int main(void)
     assert(weight_state.net_mg == 1000000);
     saved_config = recovered; tare_counts = 0;
     settle(99500, &now);
-    assert(weight_state.net_mg == 500 && weight_state.display_mg == 500);
+    assert(weight_state.net_mg == 500 && weight_state.display_mg == 0);
     assert(zero_at(average_counts(), now) == MEAS_OK);
     assert(zero_counts==99500);zero_counts=100000;zero_locked=false;
     settle(100000, &now);
@@ -251,11 +251,11 @@ int main(void)
     settle(-4901000, &now); assert(weight_state.status == WEIGHT_RANGE);
     assert(set_tare(now) == MEAS_OVERLOAD);
     settle(-5150000, &now); assert(weight_state.status == WEIGHT_OVERLOAD);
-    settle(100000, &now); assert(weight_state.display_mg == -3000000);
+    settle(100000, &now); assert(weight_state.net_mg == -3000000 && weight_state.display_mg == 0);
     open_item(MENU_GROSS, now);
     assert(tare_counts == -3000000 && ui.page == UI_WEIGH && weight_state.display_mg == 0);
     open_item(MENU_GROSS, now);
-    assert(tare_counts == -3000000 && weight_state.display_mg == -3000000);
+    assert(tare_counts == -3000000 && weight_state.net_mg == -3000000 && weight_state.display_mg == 0);
     assert(zero_at(100000,now) == MEAS_OK);
 
     open_item(MENU_OFF, now); assert(ui.page==UI_CHOICE && ui.choice==3U);
@@ -292,7 +292,7 @@ int main(void)
     assert(buzzer_remaining==0 && !(host_gpio_a.ODR & BUZZER_PIN));
     open_item(MENU_BUZZER,now); ui.choice=BUZZER_OFF; ui_event(KEY_DOUBLE,now);
 
-    /* 0.5g 真实小负载连续130秒不被零点跟踪吞掉、不触发待机。 */
+    /* 0.5g仍保留为原始测量，不参与空盘待机计时。 */
     ui.page=UI_WEIGH; settle(99500,&now); int32_t old_zero=zero_counts;
     for(unsigned i=0;i<1300;++i){now+=100;sample_add(99500,now);power_poll(now);}
     assert(!sleeping && zero_counts==old_zero);

@@ -30,7 +30,8 @@ static void replay_checks(void)
         if(weight_state.status!=WEIGHT_OK){continue;}
         if(weight_state.net_mg<low){low=weight_state.net_mg;}
         if(weight_state.net_mg>high){high=weight_state.net_mg;}
-        if(!weight_state.stable){++unstable;}
+        if(!stable){++unstable;}
+        assert(weight_state.display_mg==0);
     }
     assert(high-low>1500 && unstable>0U);
     assert(zero_counts-saved_config.zero_counts<=42 && zero_counts-saved_config.zero_counts>=-42);
@@ -45,6 +46,6 @@ static void replay_checks(void)
     assert(ui.page==UI_CAL_VERIFY && strcmp(ui.message,"drFt")==0);
     assert(flash_program_count==writes && memcmp(&previous,&saved_config,sizeof(previous))==0);
     ui_event(KEY_HOLD,now);
-    printf("PASS: %u recorded empty-scale observations replayed; real drift remains visible;\n",n);
+    printf("PASS: %u recorded empty-scale observations replayed; zero held throughout;\n",n);
     printf("      drifted unload rejected with calibration and Flash writes unchanged.\n");
 }

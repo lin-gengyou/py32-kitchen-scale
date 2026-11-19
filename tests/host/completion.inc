@@ -122,20 +122,20 @@ static void completion_checks(void)
         assert(strstr(out,"W,") && strstr(out,",OK\r\n"));++reports;
     }
     assert(reports==288000);
-    /* 24小时10SPS合成采样，静态0.5g不被自动归零、不待机；遍历uint32毫秒回绕。 */
+    /* 24小时10SPS合成采样，静态0.5g不改变基线、不待机；遍历uint32毫秒回绕。 */
     tare_counts=0;zero_counts=100000;reference_grams=500;startup_zero_pending=true;
     ui.page=UI_WEIGH;now=UINT32_MAX-10000U;settle(100500,&now);int32_t original=zero_counts;
     for(unsigned i=0;i<864000;++i){now+=100;sample_add(100500,now);power_poll(now);}
-    assert(!sleeping && zero_counts==original && weight_state.display_mg==500 && startup_zero_pending);
+    assert(!sleeping && zero_counts==original && weight_state.net_mg==500 && weight_state.display_mg==0 && startup_zero_pending);
     settle(100000,&now);power_poll(now);assert(startup_zero_pending);
     for(unsigned i=0;i<30U;++i){now+=100;sample_add(100000,now);power_poll(now);}
     assert(!startup_zero_pending);
-    /* 重启时实机见到-2.5g的负偏，稳定后回零并保留0.5g真实载荷。 */
+    /* 重启时实机见到-2.5g的负偏，稳定后回零，0.5g只保留在内部读数。 */
     sample_reset();startup_zero_pending=true;empty_candidate=false;
     settle(97500,&now);
     for(unsigned i=0;i<45U;++i){now+=100;sample_add(97500,now);power_poll(now);}
     assert(!startup_zero_pending && zero_locked && zero_counts==97500 && weight_state.display_mg==0);
-    settle(98000,&now);assert(!zero_locked && weight_state.display_mg==500);
+    settle(98000,&now);assert(!zero_locked && weight_state.net_mg==500 && weight_state.display_mg==0);
     open_item(MENU_BLUETOOTH,now);ui.choice=0;ui_event(KEY_DOUBLE,now);
     assert(!ble_enabled && saved_config.bluetooth_enabled==0);
 

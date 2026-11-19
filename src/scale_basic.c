@@ -86,6 +86,7 @@ static int32_t zero_counts;
 static int32_t tare_counts;
 static bool show_gross;
 static bool zero_locked;
+static bool display_zero;
 static unsigned zero_excursion;
 static uint32_t reference_grams;
 static bool zero_set;
@@ -97,6 +98,8 @@ static volatile bool buzzer_on;
 static uint32_t buzzer_phase_ms;
 static bool startup_zero_pending;
 #define STARTUP_ZERO_NEGATIVE_MG 5000
+#define DISPLAY_ZERO_ENTER_MG 10000
+#define DISPLAY_ZERO_EXIT_MG 12000
 
 /* 文档V1.0的持久配置与统一状态；外部供电的电池百分比使用-1。 */
 static ScaleConfig saved_config;
@@ -204,6 +207,7 @@ static bool hx711_read(int32_t *counts)
 static void sample_reset(void)
 {
     zero_locked = false;
+    display_zero = false;
     zero_excursion = 0U;
     sample_count = 0;
     sample_index = 0;
@@ -625,27 +629,34 @@ static void weight_update(uint32_t now)
     /* 锁定后的示值在小幅波动内保持，空盘锁定使用独立状态。 */
     uint32_t hold_band=weight_state.division_mg;
     if (hold_band==100U) { hold_band=300U; }
-    bool at_zero=(zero_locked && tare_counts == 0) || (stable && (uint32_t)net+200U<=400U);
-    held = held && weight_state.tare_mg == (int32_t)tare && display_delta<hold_band &&
-        (!at_zero || weight_state.display_mg==0);
     weight_state.gross_mg = (int32_t)gross;
+    held = held && weight_state.tare_mg == (int32_t)tare && display_delta<hold_band;
     weight_state.tare_mg = (int32_t)tare;
     weight_state.net_mg = (int32_t)net;
+    /* 只锁显示值。毛重覆盖卸下容器的空盘，净重覆盖已去皮的空容器。 */
+    int32_t zero_limit = display_zero ? DISPLAY_ZERO_EXIT_MG : DISPLAY_ZERO_ENTER_MG;
+    display_zero = (gross >= -zero_limit && gross <= zero_limit) ||
+                   (net >= -zero_limit && net <= zero_limit);
+    if (display_zero) {
+        weight_state.display_mg = 0;
+        weight_state.division_mg = 100;
+        weight_state.stable = true;
+        weight_state.status = WEIGHT_OK;
+        return;
+    }
     if (!held) {
         weight_state.division_mg = select_division((int32_t)net);
         uint32_t units = (uint32_t)net;
         uint32_t magnitude = net < 0 ? 0U - units : units;
-        /* 稳定净重在±0.2g内显示0.0；0.5g及以上负载仍可触发解锁。 */
-        if (at_zero) { net=0; magnitude=0; }
         uint32_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
         /* 动态阶段保留3/4分度滞回；进入稳定时按最新均值取整并锁定。 */
-        if (at_zero || stable || previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
+        if (stable || previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
             display_delta >= (weight_state.division_mg*3U + 3U) / 4U) {
             weight_state.display_mg = (int32_t)(net < 0 ? 0U - rounded : rounded);
         }
     }
     display_locked=held || stable;
-    weight_state.stable = stable || at_zero;
+    weight_state.stable = stable;
     weight_state.status = WEIGHT_OK;
     if (stable) {
         weight_state.motion = MOTION_STABLE;

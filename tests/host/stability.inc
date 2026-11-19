@@ -29,7 +29,7 @@ static void stability_checks(void)
         now+=100;sample_add(100264+(int32_t)i*2,now);weight_update(now);
         if(!stable){exited=true;}
     }
-    assert(exited && weight_state.display_mg>=800); /* 慢加料也不能永久保持旧锚点 */
+    assert(exited && weight_state.net_mg>=800 && weight_state.display_mg==0); /* 内部判稳仍会退出 */
     stable_counts=10;assert(stability_limit()==10);sample_reset();
     for(unsigned i=0;i<50;++i){now+=100;sample_add(100000+noise[i%6],now);}
     assert(!stable);settle(100000,&now);assert(stable);

@@ -302,14 +302,8 @@ static void ui_render(uint32_t now)
     else if (ui.page == UI_WEIGH) {
         switch (weight_state.status) {
         case WEIGHT_OK:
-            if (startup_zero_pending && tare_counts == 0 &&
-                    (uint32_t)(now - ui.startup_ms) < 12000U &&
-                    weight_state.gross_mg >= -STARTUP_ZERO_NEGATIVE_MG && weight_state.gross_mg < 0) {
-                lcd_text("", "------", 0);
-            } else {
-                lcd_weight(weight_state.display_mg, saved_config.unit != 0U, weight_state.stable,
-                    show_gross ? LCD_GROSS : tare_counts != 0 ? LCD_TARE : LCD_NORMAL);
-            }
+            lcd_weight(weight_state.display_mg, saved_config.unit != 0U, weight_state.stable,
+                show_gross ? LCD_GROSS : tare_counts != 0 ? LCD_TARE : LCD_NORMAL);
             break;
         case WEIGHT_UNCALIBRATED: lcd_text("CAL", "noCAL", 0); break;
         case WEIGHT_SENSOR_ERROR: lcd_text("Err", "SEnSr", 0); break;

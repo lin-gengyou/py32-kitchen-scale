@@ -1,6 +1,6 @@
 # 5kg 厨房电子秤 · PY32F002A
 
-**v2.4.1：SW4 双击确认、空秤追零、毛重与净重切换、两节电池电量。** 默认 20 g 单点标定、空盘无操作 120 秒待机。板上 14 项菜单支持日常设置和维护。
+**v2.4.2：SW4 双击确认、空秤追零、毛重与净重切换、两节电池电量。** 默认 20 g 单点标定、空盘无操作 120 秒待机。板上 14 项菜单支持日常设置和维护。
 
 开发环境：**VS Code + PlatformIO + C / 普冉HAL**。仓库包含源码、板型、链接脚本、固定依赖、下载脚本、原理图、需求文档、操作指南、蓝牙客户端和固件。
 
@@ -21,7 +21,7 @@
 
 ## 功能
 
-- 确认空盘后保持零示值并追踪慢漂，达到明显变化时重新称量。稳定的小波动保持已锁定示值。
+- 毛重或净重进入 ±10 g 后强制显示零，锁零后超过 ±12 g 才更新示值。复验用 20 g 砝码。
 - 5000g容量、5250g超载；按毛重保护，支持负净重，采用0.1/0.5/1g分段分度。
 - 去皮、归零及标定在松手800ms后采16个新读数。1～3点标定，默认1点20g；卸载检查通过后整体保存。
 - 04提供0、30、60、120、300、600秒待机档。11查看两节碱性电池估算电量与电压。12切换5位和6位显示，默认5位绕过已知缺段位。
@@ -79,7 +79,7 @@ pio run -e scale_basic -t upload
 pio run -e scale_basic_jlink -t upload
 ```
 
-也可在PlatformIO → Project Tasks → 对应环境点Build/Upload。下载使用Puya DFP、100kHz SWD、扇区擦除，保留独立配置区。完成后复位运行，LCD先自检再显示2.4.1。
+也可在PlatformIO → Project Tasks → 对应环境点Build/Upload。下载使用Puya DFP、100kHz SWD、扇区擦除，保留独立配置区。完成后复位运行，LCD先自检再显示2.4.2。
 
 ## 3. 20g标定与第一次称重
 
@@ -110,11 +110,11 @@ git pull --ff-only
 pio run -e scale_basic -t upload
 ```
 
-当前文件：[firmware/v2.4.1](firmware/v2.4.1)，对应[GitHub Release](https://github.com/lin-gengyou/py32-kitchen-scale/releases/tag/v2.4.1)。
+当前文件：[firmware/v2.4.2](firmware/v2.4.2)，对应[GitHub Release](https://github.com/lin-gengyou/py32-kitchen-scale/releases/tag/v2.4.2)。
 
 - scale_basic.hex / .elf包含地址；scale_basic.bin起始地址0x08000000。
 - blink.*为点灯诊断；SHA256SUMS核对固件，manifest.json核对源码。
-- 当前操作使用v2.4.1指南。
+- 当前操作使用v2.4.2指南。
 
 ## 6. 彩屏怎么用
 
@@ -138,7 +138,7 @@ pio run -e scale_basic -t upload
 python tools/run_host_checks.py
 node --test tests/web/protocol.test.mjs
 pio run -e scale_py32f002a -e scale_basic -e scale_py32f002a_jlink -e scale_basic_jlink
-python tools/package_firmware.py --version v2.4.1
+python tools/package_firmware.py --version v2.4.2
 ```
 
 Windows主机检查可加 `--cc C:/msys64/ucrt64/bin/gcc.exe`。已覆盖合成8小时蓝牙/24小时称重调度；整机精度、偏载、漂移与无线长测按[需求对照](REQUIREMENTS.md)逐项测量。20g单点完成当前校准流程，大量程精度使用对应质量标准砝码检验。

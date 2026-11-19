@@ -17,7 +17,7 @@ static void hold_checks(void)
         moved|=weight_state.net_mg!=0;
     }
     assert(moved);
-    /* 空盘确认后随慢漂保持零，从当时的新基线加入0.5g必须解除空盘锁。 */
+    /* 空盘确认后随慢漂保持零，0.5g退出慢漂跟踪，示值继续为零。 */
     assert(zero_at(100000,now) == MEAS_OK);
     for (unsigned i=0;i<150U;++i) {
         now+=100;sample_add(100000+(int32_t)i*10,now);power_poll(now);
@@ -26,17 +26,16 @@ static void hold_checks(void)
     assert(zero_counts>101400 && saved_config.zero_counts==100000);
     int32_t base=zero_counts;
     settle(base+500,&now);
-    assert(!zero_locked && weight_state.display_mg==500);
+    assert(!zero_locked && weight_state.net_mg>=450 && weight_state.net_mg<=550 && weight_state.display_mg==0);
     zero_counts=100000;
     sample_reset();
-    /* 旧保持区会吞掉0.35g偏移。稳定后应显示到0.1g分度。 */
-    settle(100350,&now);
-    assert(weight_state.net_mg==350 && weight_state.display_mg==400);
-    sample_reset();settle(100000,&now);
-    /* 真实0.5g在中值确认后的第2帧撤销S；随后锁在0.5g。 */
-    for(unsigned i=0;i<2U;++i){now+=100;sample_add(100500,now);weight_update(now);}
-    assert(!weight_state.stable);
-    settle(100500,&now);assert(weight_state.display_mg==500);
+    /* 直接漂至±9g始终显示零，12g以内继续锁零，正常加载与卸载使用滞回。 */
+    settle(102500,&now);assert(weight_state.net_mg==2500 && weight_state.display_mg==0);
+    settle(91000,&now);assert(weight_state.net_mg==-9000 && weight_state.display_mg==0);
+    settle(112000,&now);assert(weight_state.display_mg==0);
+    settle(112500,&now);assert(weight_state.display_mg==12500);
+    settle(111000,&now);assert(weight_state.display_mg==11000);
+    settle(110000,&now);assert(weight_state.display_mg==0);
 
     settle(120000,&now);assert(weight_state.display_mg==20000);
     for(unsigned i=0;i<180U;++i){
@@ -66,10 +65,12 @@ static void hold_checks(void)
     open_item(MENU_GROSS,now);assert(weight_state.display_mg==30000 && tare_counts==10000);
     open_item(MENU_GROSS,now);assert(weight_state.display_mg==20000 && tare_counts==10000);
     assert(tare_at(151000,now) == MEAS_OK);
-    settle(141000,&now);assert(weight_state.display_mg==-10000);
+    settle(136000,&now);assert(weight_state.display_mg==-15000);
+    settle(121000,&now);assert(weight_state.display_mg==0 && tare_counts==30000);
+    settle(136000,&now);assert(weight_state.display_mg==-15000);
     for(unsigned i=0;i<80U;++i){
-        now+=100;sample_add(141000+noise[i%6],now);weight_update(now);
-        assert(weight_state.stable && weight_state.display_mg==-10000);
+        now+=100;sample_add(136000+noise[i%6],now);weight_update(now);
+        assert(weight_state.stable && weight_state.display_mg==-15000);
     }
     sample_fault=true;weight_update(now);
     assert(weight_state.status==WEIGHT_SENSOR_ERROR && !weight_state.stable);
@@ -83,5 +84,5 @@ static void hold_checks(void)
     settle(5350000,&now);assert(weight_state.status==WEIGHT_OVERLOAD && !weight_state.stable);
     sample_reset();settle(100000,&now);assert(weight_state.display_mg==0);
     printf("PASS: stable zero/load/negative display hold with live internal readings;\n");
-    printf("      0.5g unlock, slow filling, missed output frames, tare/zero, fault and division changes.\n");
+    printf("      10g/12g zero hysteresis, slow filling, missed output frames, tare/zero, fault and division changes.\n");
 }
