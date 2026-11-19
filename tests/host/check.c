@@ -251,11 +251,11 @@ int main(void)
     settle(-4901000, &now); assert(weight_state.status == WEIGHT_RANGE);
     assert(set_tare(now) == MEAS_OVERLOAD);
     settle(-5150000, &now); assert(weight_state.status == WEIGHT_OVERLOAD);
-    settle(100000, &now); assert(weight_state.net_mg == -3000000 && weight_state.display_mg == 0);
+    settle(100000, &now); assert(weight_state.net_mg == -3000000 && weight_state.display_mg == -3000000);
     open_item(MENU_GROSS, now);
     assert(tare_counts == -3000000 && ui.page == UI_WEIGH && weight_state.display_mg == 0);
     open_item(MENU_GROSS, now);
-    assert(tare_counts == -3000000 && weight_state.net_mg == -3000000 && weight_state.display_mg == 0);
+    assert(tare_counts == -3000000 && weight_state.display_mg == -3000000);
     assert(zero_at(100000,now) == MEAS_OK);
 
     open_item(MENU_OFF, now); assert(ui.page==UI_CHOICE && ui.choice==3U);

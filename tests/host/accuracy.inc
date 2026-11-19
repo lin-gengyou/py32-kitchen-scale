@@ -30,6 +30,14 @@ static void accuracy_checks(void)
     assert(ui.page==UI_WEIGH && saved_config.grams[0]==20 && zero_counts==100000);
     settle(120000,&now);assert(weight_state.display_mg==20000);
     settle(100000,&now);assert(weight_state.display_mg==0);
+    /* 单帧大尖峰不应推迟确认，也不能偏移新零点。 */
+    ui_event(KEY_DOUBLE,now);
+    for (unsigned i=0;i<24U;++i) {
+        now+=100U;
+        sample_add(i==12U ? 102000 : 100000,now);
+        measurement_poll(now);
+    }
+    assert(capture.kind==MEASURE_NONE && zero_counts==100000 && weight_state.display_mg==0);
 
     /* 同一次三点标定在不同时间采集。线性漂移应从各点按比例扣除。 */
     now += 1000U;
@@ -57,7 +65,7 @@ static void accuracy_checks(void)
     assert(strcmp(scale_remote_tare(now),"ERR,BUSY\r\n")==0);
     finish_capture(110000,&now);assert(tare_counts==10000);
     settle(130000,&now);assert(weight_state.display_mg==20000);
-    settle(100000,&now);assert(weight_state.net_mg==-10000 && weight_state.display_mg==0);
+    settle(100000,&now);assert(weight_state.net_mg==-10000 && weight_state.display_mg==-10000);
     tare_counts=0;
 
     /* 人工明确确认空秤时可修正3.8g偏移，0.5g小负载依旧保留在内部读数。 */

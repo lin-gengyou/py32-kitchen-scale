@@ -29,13 +29,12 @@ static void hold_checks(void)
     assert(!zero_locked && weight_state.net_mg>=450 && weight_state.net_mg<=550 && weight_state.display_mg==0);
     zero_counts=100000;
     sample_reset();
-    /* 直接漂至±9g始终显示零，12g以内继续锁零，正常加载与卸载使用滞回。 */
-    settle(102500,&now);assert(weight_state.net_mg==2500 && weight_state.display_mg==0);
-    settle(91000,&now);assert(weight_state.net_mg==-9000 && weight_state.display_mg==0);
-    settle(112000,&now);assert(weight_state.display_mg==0);
-    settle(112500,&now);assert(weight_state.display_mg==12500);
-    settle(111000,&now);assert(weight_state.display_mg==11000);
-    settle(110000,&now);assert(weight_state.display_mg==0);
+    /* ±1g内为零，超过门限立即恢复真实示值；10g砝码仍能称量。 */
+    settle(101000,&now);assert(weight_state.net_mg==1000 && weight_state.display_mg==0);
+    settle(99000,&now);assert(weight_state.net_mg==-1000 && weight_state.display_mg==0);
+    settle(101100,&now);assert(weight_state.display_mg==1100);
+    settle(110000,&now);assert(weight_state.display_mg==10000);
+    settle(101000,&now);assert(weight_state.display_mg==0);
 
     settle(120000,&now);assert(weight_state.display_mg==20000);
     for(unsigned i=0;i<180U;++i){
@@ -43,7 +42,7 @@ static void hold_checks(void)
         assert(weight_state.stable && weight_state.display_mg==20000);
     }
     assert(weight_state.net_mg>20075); /* 已超过旧版3/4分度更新点，仍应锁在20.0。 */
-    settle(120240,&now);assert(weight_state.display_mg==20000);
+    settle(120240,&now);assert(weight_state.display_mg==20200);
     bool unlocked=false;
     for(unsigned i=1;i<=160U;++i){
         now+=100;sample_add(120155+(int32_t)i*5,now);weight_update(now);
@@ -66,7 +65,7 @@ static void hold_checks(void)
     open_item(MENU_GROSS,now);assert(weight_state.display_mg==20000 && tare_counts==10000);
     assert(tare_at(151000,now) == MEAS_OK);
     settle(136000,&now);assert(weight_state.display_mg==-15000);
-    settle(121000,&now);assert(weight_state.display_mg==0 && tare_counts==30000);
+    settle(121000,&now);assert(weight_state.display_mg==-30000 && tare_counts==30000);
     settle(136000,&now);assert(weight_state.display_mg==-15000);
     for(unsigned i=0;i<80U;++i){
         now+=100;sample_add(136000+noise[i%6],now);weight_update(now);
@@ -84,5 +83,5 @@ static void hold_checks(void)
     settle(5350000,&now);assert(weight_state.status==WEIGHT_OVERLOAD && !weight_state.stable);
     sample_reset();settle(100000,&now);assert(weight_state.display_mg==0);
     printf("PASS: stable zero/load/negative display hold with live internal readings;\n");
-    printf("      10g/12g zero hysteresis, slow filling, missed output frames, tare/zero, fault and division changes.\n");
+    printf("      1g zero band and 10g reading, slow filling, missed output frames, tare/zero, fault and division changes.\n");
 }
