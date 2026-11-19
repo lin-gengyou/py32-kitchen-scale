@@ -43,6 +43,17 @@ static void ui_result(MeasurementResult result, uint32_t now)
     ui_message(text[result], result == MEAS_OK, now);
 }
 
+static void ui_tare_result(MeasurementResult result, uint32_t now)
+{
+    /* 去皮完成后立即恢复重量页，成功提示音保持。 */
+    if (result == MEAS_OK) {
+        ui.message = NULL;
+        buzzer_start(1U, now);
+        return;
+    }
+    ui_result(result, now);
+}
+
 static void ui_save(const ScaleConfig *candidate, uint32_t now)
 {
     if (save_settings(candidate)) { ui.page = UI_MENU; ui_message("SAvEd", true, now); }

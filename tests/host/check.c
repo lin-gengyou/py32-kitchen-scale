@@ -234,9 +234,9 @@ int main(void)
     ui.page = UI_WEIGH;
     unsigned original_unit = saved_config.unit;
     settle(-20000, &now);
-    key_time(true, 100, -20000, &now); key_time(false, 400, -20000, &now);
-    finish_capture(-20000,&now);
-    assert(tare_counts == -120000);
+    key_time(true, 100, -20000, &now); key_time(false, 1650, -20000, &now);
+    assert(capture.kind == MEASURE_NONE && tare_counts == -120000);
+    assert(weight_state.display_mg == 0 && ui.message == NULL);
     key_time(true, 1800, 100000, &now); key_time(false, 40, 100000, &now);
     assert(ui.page == UI_MENU && tare_counts == -120000);
     ui_event(KEY_HOLD, now);

@@ -114,14 +114,20 @@ static bool sleeping;
 static IWDG_HandleTypeDef watchdog;
 static bool watchdog_ready;
 
-/* 本机测量在松手后等待800ms，再采16个新读数，避免把按键施力写入零点。 */
+/* 短按确认另有350ms双击等待。归零和标定继续使用较长采集窗口。 */
+enum {
+    TARE_SETTLE_MS = 250,
+    TARE_SAMPLES = 10,
+    MEASUREMENT_SETTLE_MS = 800,
+    MEASUREMENT_SAMPLES = 16,
+};
 typedef enum { MEASURE_NONE, MEASURE_TARE, MEASURE_ZERO, MEASURE_CAL } MeasurementKind;
 typedef enum { MEAS_OK, MEAS_NEED_CAL, MEAS_WAIT, MEAS_UNSTABLE, MEAS_OVERLOAD,
     MEAS_POWER, MEAS_NOT_EMPTY, MEAS_FLASH } MeasurementResult;
 static struct {
     MeasurementKind kind;
     uint32_t started, released, stamp;
-    int32_t data[16];
+    int32_t data[MEASUREMENT_SAMPLES];
     unsigned count;
 } capture;
 static void measurement_request(MeasurementKind kind, uint32_t now);
@@ -772,7 +778,8 @@ static void measurement_request(MeasurementKind kind, uint32_t now)
 }
 static void measurement_poll(uint32_t now)
 {
-    if (capture.kind==MEASURE_NONE) { return; }
+    MeasurementKind kind = capture.kind;
+    if (kind==MEASURE_NONE) { return; }
     if ((uint32_t)(now-capture.started)>20000U) {
         capture.kind=MEASURE_NONE;
         ui_result(samples_ready(now) ? MEAS_UNSTABLE : MEAS_WAIT,now);return;
@@ -781,24 +788,35 @@ static void measurement_poll(uint32_t now)
         capture.kind=MEASURE_NONE;ui_result(MEAS_POWER,now);return;
     }
     if ((KEY_PORT->IDR&KEY_PIN)==0U) { capture.released=now;capture.count=0; }
-    if ((uint32_t)(now-capture.released)<800U || !samples_ready(now)) {
+    uint32_t settle_ms = kind == MEASURE_TARE ? TARE_SETTLE_MS : MEASUREMENT_SETTLE_MS;
+    if ((uint32_t)(now-capture.released)<settle_ms || !samples_ready(now)) {
         capture.count=0;capture.stamp=last_sample_ms;return;
     }
     if (capture.stamp==last_sample_ms) { return; } capture.stamp=last_sample_ms;
     /* 用最近的三点中值采集，单个ADC尖峰不会污染标定和去皮。 */
     capture.data[capture.count++]=samples[(sample_index + AVERAGE_SAMPLES - 1U) % AVERAGE_SAMPLES];
-    if(capture.count<16U){return;}
-    uint32_t spread,limit=stability_limit();
-    int32_t mean=trimmed_mean(capture.data,16,&spread),trend=0;
-    for(unsigned i=0;i<8;++i){trend+=capture.data[i]-capture.data[i+8U];}
-    if(trend<0){trend=-trend;}
-    if(spread>limit*2U || (uint32_t)trend>limit*4U){capture.count=0;return;}
-    MeasurementKind kind=capture.kind;capture.kind=MEASURE_NONE;
+    unsigned count = kind == MEASURE_TARE ? TARE_SAMPLES : MEASUREMENT_SAMPLES;
+    if (capture.count < count) { return; }
+    unsigned half = count / 2U;
+    uint32_t spread, limit = stability_limit();
+    int32_t mean = trimmed_mean(capture.data, count, &spread);
+    int32_t trend = 0;
+    for (unsigned i = 0; i < half; ++i) {
+        trend += capture.data[i] - capture.data[i + half];
+    }
+    if (trend < 0) { trend = -trend; }
+    /* 两种窗口的前后半段均值都必须相差不超过判稳门限的一半。 */
+    if (spread > limit * 2U || (uint32_t)trend * 2U > limit * half) {
+        capture.count = 0;
+        return;
+    }
+    capture.kind=MEASURE_NONE;
     if(kind==MEASURE_CAL){ui_cal_apply(mean,now);return;}
     MeasurementResult result;
     if(reference_grams!=0U && gross_milligrams(mean)>(int64_t)MAX_GROSS_GRAMS*1000){result=MEAS_OVERLOAD;}
     else{result=kind==MEASURE_ZERO?zero_at(mean,now):tare_at(mean,now);}
-    ui_result(result,now);
+    if (kind == MEASURE_TARE) { ui_tare_result(result, now); }
+    else { ui_result(result, now); }
 }
 
 
@@ -815,7 +833,7 @@ const char *scale_remote_tare(uint32_t now)
     static const char *const reply[] = {"OK,TARE\r\n", "ERR,NEED_CAL\r\n",
         "ERR,WAIT_SAMPLES\r\n", "ERR,UNSTABLE\r\n", "ERR,OVERLOAD\r\n", "ERR,POWER\r\n"};
     MeasurementResult result = set_tare(now);
-    ui_result(result, now);
+    ui_tare_result(result, now);
     return reply[result];
 }
 void scale_remote_wake(uint32_t now) { wake_scale(now); idle_since_ms = now; }

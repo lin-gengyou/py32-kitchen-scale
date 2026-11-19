@@ -63,7 +63,13 @@ static void accuracy_checks(void)
     /* 去皮同样只使用释放后的容器读数，按压附加1.5g不进入皮重。 */
     settle(111500,&now);ui_event(KEY_TAP,now);assert(capture.kind==MEASURE_TARE);
     assert(strcmp(scale_remote_tare(now),"ERR,BUSY\r\n")==0);
-    finish_capture(110000,&now);assert(tare_counts==10000);
+    for (unsigned i = 0; i < 11U; ++i) {
+        now += 100U; sample_add(110000,now); measurement_poll(now);
+    }
+    assert(capture.kind==MEASURE_TARE && capture.count==9U && tare_counts==0);
+    now += 100U; sample_add(110000,now); measurement_poll(now);
+    assert(capture.kind==MEASURE_NONE && tare_counts==10000);
+    assert(weight_state.display_mg==0 && ui.message==NULL);
     settle(130000,&now);assert(weight_state.display_mg==20000);
     settle(100000,&now);assert(weight_state.net_mg==-10000 && weight_state.display_mg==-10000);
     tare_counts=0;
@@ -104,8 +110,8 @@ static void accuracy_checks(void)
     ui_event(KEY_HOLD,now);assert(capture.kind==MEASURE_NONE && saved_config.unit==unit);
     /* 采到一半遇到ADC故障，恢复后必须整组重采，不能混入故障前的旧样本。 */
     ui_event(KEY_TAP,now);
-    for(unsigned i=0;i<15;++i){now+=100;sample_add(zero_counts+500,now);measurement_poll(now);}
-    assert(capture.count>0 && capture.count<16);
+    for(unsigned i=0;i<8;++i){now+=100;sample_add(zero_counts+500,now);measurement_poll(now);}
+    assert(capture.count>0 && capture.count<TARE_SAMPLES);
     sample_fault=true;measurement_poll(now+1);assert(capture.count==0);
     finish_capture(zero_counts+800,&now);assert(tare_counts==800);
     int32_t old_tare=tare_counts;
@@ -116,7 +122,7 @@ static void accuracy_checks(void)
     ui_event(KEY_TAP,now);sample_fault=true;measurement_poll(now+20001U);
     assert(capture.kind==MEASURE_NONE && tare_counts==old_tare && strcmp(ui.message,"no Ad")==0);
     sample_fault=false;
-    printf("PASS: post-release 16-sample acquisition, button force rejection, unload verification/rollback;\n");
+    printf("PASS: post-release 10-sample tare, 16-sample calibration, button force rejection and rollback;\n");
     printf("      0/20g/0 calibration, async tare/zero/cancel/timeout, fractional zero tracking,\n");
     printf("      quantizer hysteresis, negative signed mean, and 0.5g raw measurement.\n");
 }
