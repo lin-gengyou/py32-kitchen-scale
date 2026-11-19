@@ -127,17 +127,40 @@ static void completion_checks(void)
     ui.page=UI_WEIGH;now=UINT32_MAX-10000U;settle(100500,&now);int32_t original=zero_counts;
     for(unsigned i=0;i<864000;++i){now+=100;sample_add(100500,now);power_poll(now);}
     assert(!sleeping && zero_counts==original && weight_state.display_mg==500 && startup_zero_pending);
-    settle(100000,&now);power_poll(now);assert(!startup_zero_pending);
+    settle(100000,&now);power_poll(now);assert(startup_zero_pending);
+    for(unsigned i=0;i<30U;++i){now+=100;sample_add(100000,now);power_poll(now);}
+    assert(!startup_zero_pending);
     open_item(MENU_SOURCE,now);ui.choice=2;ui_event(KEY_HOLD,now);
     assert(saved_config.battery_profile==2);
     open_item(MENU_VREF,now);ui.value=1234;ui_event(KEY_HOLD,now);
     assert(saved_config.battery_reference_mv==1234);
     open_item(MENU_BLUETOOTH,now);ui.choice=0;ui_event(KEY_HOLD,now);
     assert(!ble_enabled && saved_config.bluetooth_enabled==0);
+
+    static const struct { UiMenu item; UiPage page; unsigned pages; } browse[] = {
+        {MENU_RAW, UI_RAW, 3}, {MENU_INFO, UI_INFO, 7},
+        {MENU_TEST, UI_TEST, 4}, {MENU_BATTERY, UI_BATTERY, 5},
+    };
+    unsigned writes=flash_program_count;
+    for (unsigned i=0;i<sizeof(browse)/sizeof(browse[0]);++i) {
+        open_item(browse[i].item, now);
+        assert(ui.page==browse[i].page && ui.info_page==0);
+        for (unsigned page=0;page<browse[i].pages;++page) {
+            now+=200U;ui_render(now);ui_event(KEY_TAP,now);
+        }
+        assert(ui.info_page==browse[i].pages);
+        ui_event(KEY_HOLD,now);assert(ui.page==UI_MENU);
+    }
+    open_item(MENU_SLEEP,now);assert(sleeping && !enabled);
+    wake_scale(now);assert(!sleeping && enabled);
+    open_item(MENU_EXIT,now);assert(ui.page==UI_WEIGH && flash_program_count==writes);
+
     open_item(MENU_RESET,now);ui_event(KEY_DOUBLE,now);assert(saved_config.point_count==1);
+    display_interval_ms=100;
     open_item(MENU_RESET,now);ui_event(KEY_HOLD,now);
     assert(saved_config.point_count==0 && saved_config.battery_profile==0 &&
-        saved_config.battery_reference_mv==1200 && saved_config.lcd_missing_mask==4 && ble_enabled);
+        saved_config.battery_reference_mv==1200 && saved_config.lcd_missing_mask==4 &&
+        ble_enabled && display_interval_ms==200);
     printf("PASS: V2/V3/V4 migration, ADC power profiles/hysteresis/fault gates, healthy LCD slots;\n");
     printf("      BLE fragmentation/duplicate/error/stale/wrap/heartbeat and atomic TX;\n");
     printf("      synthetic 8-hour BLE (288000 frames) and 24-hour weighing (864000 samples).\n");

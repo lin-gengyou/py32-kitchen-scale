@@ -44,6 +44,7 @@ v1.1.1菜单改为01～15数字编号；参数页短字母仍为七段近似形�
 ## 资料来源
 
 - [Holtek HT1621/HT1621G 原厂数据手册](https://www.holtek.com/webapi/116711/HT1621_21Gv340.pdf)：命令、地址与RAM时序。
+- [大连奇耘 GDC0689 产品页](https://www.qiyun-display.cn/Products_1/42.html)：42 × 25 × 2.8 mm，视域39 × 17 mm，3.0 V液晶驱动，1/4 Duty、1/3 Bias，金属管脚，HTN正显。初始化的占空比和偏置与此相符，3.0 V是玻璃驱动规格，整板供电见原理图。
 - [Good Display GDC0689 产品资料](https://www.good-display.com/product/6-digit-low-temperature-LCD-screen%2CGDC0689-307.html)：玻璃规格。
 - [WinnerMicro官方SDK GDC0689驱动](https://github.com/winnermicro/wm_iot_sdk/blob/master/components/driver/src/display/seg_lcd/wm_gdc0689.c)：公开COM/SEG名称表，Apache-2.0。
 - 本仓库原理图：`docs/hardware/SCH_电子秤原理图_2026-10-29.pdf`，用于从玻璃脚位换算至主板网络。

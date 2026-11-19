@@ -535,7 +535,7 @@ void scale_uart_irq(void) { ble_uart_irq(); }
 /* 分度选择保留小滞回区，避免 200g 和 1000g 附近因噪声反复切换。 */
 static uint16_t select_division(int32_t net_mg)
 {
-    int64_t magnitude = net_mg < 0 ? -(int64_t)net_mg : net_mg;
+    uint32_t magnitude = net_mg < 0 ? 0U - (uint32_t)net_mg : (uint32_t)net_mg;
     uint16_t division = weight_state.division_mg;
     if (magnitude > 1001000 || (division == 1000 && magnitude >= 999000)) {
         return 1000;
@@ -601,8 +601,9 @@ static void weight_update(uint32_t now)
     weight_state.motion = net < weight_state.net_mg ? MOTION_UNLOADING : MOTION_LOADING;
     int64_t display_delta=net-weight_state.display_mg;
     if (display_delta<0) { display_delta=-display_delta; }
-    uint32_t hold_band=weight_state.division_mg*2U;
-    if (hold_band<400U) { hold_band=400U; }
+    /* 低量程保留150mg抗抖余量，避免锁住偏离近0.4g的示值。 */
+    uint32_t hold_band=weight_state.division_mg;
+    if (hold_band==100U) { hold_band=weight_state.display_mg==0 ? 200U : 150U; }
     bool at_zero=stable && (uint32_t)net+200U<=400U;
     held = held && weight_state.tare_mg == (int32_t)tare && display_delta<hold_band &&
         (!at_zero || weight_state.display_mg==0);
@@ -611,14 +612,15 @@ static void weight_update(uint32_t now)
     weight_state.net_mg = (int32_t)net;
     if (!held) {
         weight_state.division_mg = select_division((int32_t)net);
-        int64_t magnitude = net < 0 ? -net : net;
+        uint32_t units = (uint32_t)net;
+        uint32_t magnitude = net < 0 ? 0U - units : units;
         /* 稳定净重在±0.2g内显示0.0；0.5g及以上负载仍可触发解锁。 */
         if (at_zero) { net=0; magnitude=0; }
-        int64_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
+        uint32_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
         /* 动态阶段保留3/4分度滞回；进入稳定时按最新均值取整并锁定。 */
         if (stable || previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
             display_delta*4 >= weight_state.division_mg*3U) {
-            weight_state.display_mg = net < 0 ? -(int32_t)rounded : (int32_t)rounded;
+            weight_state.display_mg = (int32_t)(net < 0 ? 0U - rounded : rounded);
         }
     }
     display_locked=held || stable;
@@ -685,9 +687,6 @@ static void power_poll(uint32_t now)
         idle_since_ms = now;
         return;
     }
-    if (startup_zero_pending) {
-        zero_counts = average_counts(); startup_zero_pending = false; weight_update(now);
-    }
     if (!empty_candidate) {
         empty_candidate = true;
         empty_since_ms = now;
@@ -695,6 +694,10 @@ static void power_poll(uint32_t now)
     }
     if ((uint32_t)(now - empty_since_ms) < EMPTY_CONFIRM_MS) {
         return;
+    }
+    if (startup_zero_pending) {
+        zero_counts = average_counts(); startup_zero_pending = false;
+        weight_update(now);
     }
     weight_state.motion = MOTION_EMPTY;
     if ((uint32_t)(now - zero_track_ms) >= 1000U) {

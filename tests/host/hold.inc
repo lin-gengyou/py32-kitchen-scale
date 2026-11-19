@@ -16,14 +16,9 @@ static void hold_checks(void)
         moved|=weight_state.net_mg!=0;
     }
     assert(moved);
-    /* 0.35g缓慢偏移会让核心S重新判定，已锁定的0.0仍保持。 */
-    bool rechecked=false;
-    for(unsigned i=0;i<40U;++i){
-        now+=100;sample_add(100350,now);weight_update(now);
-        rechecked|=!weight_state.stable;
-        assert(weight_state.display_mg==0);
-    }
-    assert(rechecked && weight_state.net_mg==350 && display_locked);
+    /* 旧保持区会吞掉0.35g偏移。稳定后应显示到0.1g分度。 */
+    settle(100350,&now);
+    assert(weight_state.net_mg==350 && weight_state.display_mg==400);
     sample_reset();settle(100000,&now);
     /* 真实0.5g在中值确认后的第2帧撤销S；随后锁在0.5g。 */
     for(unsigned i=0;i<2U;++i){now+=100;sample_add(100500,now);weight_update(now);}
@@ -32,10 +27,11 @@ static void hold_checks(void)
 
     settle(120000,&now);assert(weight_state.display_mg==20000);
     for(unsigned i=0;i<180U;++i){
-        now+=100;sample_add(120080+(int32_t)(i%6U)*15,now);weight_update(now);
+        now+=100;sample_add(120060+(int32_t)(i%6U)*10,now);weight_update(now);
         assert(weight_state.stable && weight_state.display_mg==20000);
     }
     assert(weight_state.net_mg>20075); /* 已超过旧版3/4分度更新点，仍应锁在20.0。 */
+    settle(120240,&now);assert(weight_state.display_mg==20200);
     bool unlocked=false;
     for(unsigned i=1;i<=160U;++i){
         now+=100;sample_add(120155+(int32_t)i*5,now);weight_update(now);

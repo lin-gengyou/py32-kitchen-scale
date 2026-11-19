@@ -31,6 +31,26 @@ static void accuracy_checks(void)
     settle(120000,&now);assert(weight_state.display_mg==20000);
     settle(100000,&now);assert(weight_state.display_mg==0);
 
+    /* 同一次三点标定在不同时间采集。线性漂移应从各点按比例扣除。 */
+    now += 1000U;
+    ui.page=UI_CAL_EMPTY;ui.cal_count=3;
+    uint32_t start=now;
+    ui_cal_apply(100000,start);
+    static const uint32_t load_times[]={2000,5000,8000};
+    static const uint32_t masses[]={20,500,1000};
+    for(unsigned i=0;i<3;++i){
+        ui.value=masses[i];ui_event(KEY_HOLD,start+load_times[i]-1000U);
+        ui_cal_apply(100000+(int32_t)(masses[i]*1000U+load_times[i]/100U),start+load_times[i]);
+    }
+    assert(ui.page==UI_CAL_VERIFY);
+    now=start+10000U;
+    ui_cal_apply(100100,now);
+    assert(saved_config.zero_counts==100100);
+    for(unsigned i=0;i<3;++i){assert(saved_config.spans[i]==(int32_t)(masses[i]*1000U));}
+    assert(gross_milligrams(350100)==250000);
+    /* 继续用原测试零点验证去皮和追零。 */
+    zero_counts=100000;
+
     /* 去皮同样只使用释放后的容器读数，按压附加1.5g不进入皮重。 */
     settle(111500,&now);ui_event(KEY_TAP,now);assert(capture.kind==MEASURE_TARE);
     assert(strcmp(scale_remote_tare(now),"ERR,BUSY\r\n")==0);

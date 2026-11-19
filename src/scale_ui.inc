@@ -19,6 +19,7 @@ static struct {
     uint32_t startup_ms, rendered_ms, message_ms;
     const char *message;
     ScaleConfig calibration;           /* 标定过程先写草稿，最后一次性提交。 */
+    uint32_t cal_zero_ms, cal_load_ms[3];
 } ui;
 static uint32_t display_interval_ms = 200;
 
@@ -159,6 +160,7 @@ static void ui_cal_apply(int32_t counts, uint32_t now)
     if (ui.page == UI_CAL_EMPTY) {
         ui.calibration = saved_config;
         ui.calibration.zero_counts = counts;
+        ui.cal_zero_ms = now;
         ui.calibration.point_count = 0;
         memset(ui.calibration.spans, 0, sizeof(ui.calibration.spans));
         memset(ui.calibration.grams, 0, sizeof(ui.calibration.grams));
@@ -167,6 +169,7 @@ static void ui_cal_apply(int32_t counts, uint32_t now)
     }
     if (ui.page!=UI_CAL_VERIFY) {
         ui.calibration.spans[ui.cal_index] = counts - ui.calibration.zero_counts;
+        ui.cal_load_ms[ui.cal_index] = now;
         ui.calibration.point_count = ui.cal_index + 1U;
         if (!scale_config_valid(&ui.calibration)) { ui_message("SPAn", false, now); return; }
         if (ui.calibration.point_count < ui.cal_count) {
@@ -180,7 +183,14 @@ static void ui_cal_apply(int32_t counts, uint32_t now)
     if(distance*ui.calibration.grams[0]*5>span){ui_message("drFt",false,now);return;}
     /* 调整只作用于提交副本，Flash失败重试仍与本轮最初空秤比较。 */
     ScaleConfig candidate=ui.calibration;
-    for(unsigned i=0;i<candidate.point_count;++i){candidate.spans[i]-=shift;}
+    uint32_t elapsed = now - ui.cal_zero_ms;
+    if (shift != 0 && elapsed != 0U) {
+        /* 以两次空秤之间的时间比例，估算各加载点当时的空载偏移。 */
+        for (unsigned i = 0; i < candidate.point_count; ++i) {
+            uint32_t load_elapsed = ui.cal_load_ms[i] - ui.cal_zero_ms;
+            candidate.spans[i] -= (int32_t)((int64_t)shift * load_elapsed / elapsed);
+        }
+    }
     candidate.zero_counts=counts;
     if(!scale_config_valid(&candidate)){ui_message("SPAn",false,now);return;}
     if (!save_settings(&candidate)) { ui_message("FLASH", false, now); return; }
@@ -253,6 +263,7 @@ static void ui_event(KeyEvent event, uint32_t now)
         memset(candidate.spans, 0, sizeof(candidate.spans)); memset(candidate.grams, 0, sizeof(candidate.grams));
         if (save_settings(&candidate)) {
             zero_counts = 0; reference_grams = 0; tare_counts = 0; zero_set = false; empty_reference_known = false;
+            display_interval_ms = saved_config.display_interval_ms;
             ui.page = UI_WEIGH; ui_message("CLr", true, now);
         } else { ui_message("FLASH", false, now); }
     } else if (ui.page == UI_RAW || ui.page == UI_INFO || ui.page == UI_TEST || ui.page == UI_BATTERY) {
