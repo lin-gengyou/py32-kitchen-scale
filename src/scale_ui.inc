@@ -30,18 +30,10 @@ static void ui_message(const char *text, bool ok, uint32_t now)
     buzzer_start(ok ? 1U : 3U, now);
 }
 
-static void ui_result(const char *result, uint32_t now)
+static void ui_result(MeasurementResult result, uint32_t now)
 {
-    bool ok = result[0] == 'O';
-    const char *text = "donE";
-    if (!ok) {
-        text = strcmp(result, "ERR,UNSTABLE\r\n") == 0 ? "UnSt" :
-            strcmp(result, "ERR,WAIT_SAMPLES\r\n") == 0 ? "no Ad" :
-            strcmp(result, "ERR,NEED_CAL\r\n") == 0 ? "noCAL" :
-            strcmp(result, "ERR,NOT_EMPTY\r\n") == 0 ? "LoAd" :
-            strcmp(result, "ERR,POWER\r\n") == 0 ? "bAtt" : "OL";
-    }
-    ui_message(text, ok, now);
+    static const char *const text[] = {"donE", "noCAL", "no Ad", "UnSt", "OL", "bAtt", "LoAd", "FLASH"};
+    ui_message(text[result], result == MEAS_OK, now);
 }
 
 static void ui_save(const ScaleConfig *candidate, uint32_t now)
@@ -322,15 +314,13 @@ static void ui_render(uint32_t now)
         case WEIGHT_OVERLOAD: lcd_text("Err", "  OL", 0); break;
         default: lcd_text("", "------", 0); break;
         }
-    } else if (ui.page == UI_MENU) {
+        if (battery_state()->valid) { lcd_battery(battery_state()->percent); }
+    } else if (ui.page == UI_MENU || ui.page == UI_CHOICE) {
         /* 七段屏用数字编号，避免将长单词拼成难辨认的字形。 */
         unsigned code = (unsigned)ui.menu + 1U;
         char title[5] = {' ', ' ', (char)('0' + code / 10U), (char)('0' + code % 10U), 0};
-        lcd_text(title, "", 0);
-    } else if (ui.page == UI_CHOICE) {
-        unsigned code = (unsigned)ui.menu + 1U;
-        char title[5] = {' ', ' ', (char)('0' + code / 10U), (char)('0' + code % 10U), 0};
-        lcd_number(title, (int32_t)ui.choice, 0);
+        if (ui.page == UI_MENU) { lcd_text(title, "", 0); }
+        else { lcd_number(title, (int32_t)ui.choice, 0); }
     } else if (ui.page == UI_EDIT) {
         static const char *const titles[] = {"OFF","StAb","rAtE","CAL","Id","YEAr","Mon","dAY","1800"};
         unsigned width = lcd_body_width();
@@ -378,7 +368,9 @@ static void ui_render(uint32_t now)
         char title[5] = {'1','6','0',(char)('1' + page),0};
         int32_t value = page == 0U ? power->millivolts : page == 1U ? power->supply_mv :
             page == 2U ? power->percent : page == 3U ? power->status : (int32_t)saved_config.battery_profile;
-        lcd_number(title, value, 0);
+        if ((page < 2U && !power->valid) || (page == 2U && value < 0)) {
+            lcd_text(title, "-----", 0);
+        } else { lcd_number(title, value, 0); }
     } else if (ui.page == UI_TEST) {
         if (ui.info_page % 4U == 0U) { lcd_test_all(); }
         else if (ui.info_page % 4U == 1U) { lcd_text("1234", "123456", 0x1f); }

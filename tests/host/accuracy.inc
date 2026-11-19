@@ -61,7 +61,12 @@ static void accuracy_checks(void)
 
     /* 人工明确确认空秤时可修正3.8g偏移，自动追零依旧保留0.5g小负载。 */
     settle(105300,&now);ui_event(KEY_HOLD,now);finish_capture(103800,&now);
-    assert(zero_counts==103800 && tare_counts==0);
+    assert(zero_counts==103800 && tare_counts==0 && weight_state.display_mg == 0);
+    ScaleConfig reboot_config;
+    assert(scale_config_load(&reboot_config) && reboot_config.zero_counts == 103800);
+    for (unsigned i = 0; i < 3; ++i) {
+        assert(reboot_config.spans[i] == (int32_t)(masses[i] * 1000U));
+    }
     startup_zero_pending=false;empty_reference_known=true;empty_candidate=false;saved_config.auto_off_seconds=0;
     settle(103840,&now);
     for(unsigned i=0;i<140;++i){now+=100;sample_add(103840,now);power_poll(now);}

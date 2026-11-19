@@ -58,10 +58,10 @@ static void completion_checks(void)
     battery_configure(BATTERY_LIION_1S,1200);
     for(unsigned i=0;i<3;++i){power_measure(2900,&now);}
     settle(100000,&now);assert(weight_state.status==WEIGHT_LOW_BATTERY);
-    assert(strcmp(set_tare(now),"ERR,POWER\r\n")==0);
+    assert(set_tare(now) == MEAS_POWER);
     battery_accept_raw(0,0,now); weight_update(now); assert(weight_state.status==WEIGHT_POWER_ERROR);
     battery_configure(1,1200);weight_update(now);assert(weight_state.status==WEIGHT_WAIT);
-    assert(strcmp(set_tare(now),"ERR,WAIT_SAMPLES\r\n")==0);
+    assert(set_tare(now) == MEAS_WAIT);
     saved_config.battery_profile=0;battery_configure(0,1200);weight_update(now);
     assert(weight_state.status==WEIGHT_OK && weight_state.battery_percent==-1);
 

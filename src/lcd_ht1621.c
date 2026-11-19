@@ -151,22 +151,22 @@ static void digit(unsigned position, char c, bool dot)
     }
 }
 
+/* 遇到字符串结尾后填空。下排可按屏幕配置绕过缺段位。 */
+static void digits(const char *text, unsigned count, unsigned start, unsigned skip, uint8_t dots)
+{
+    for (unsigned i = 0; i < count; ++i) {
+        char c = *text;
+        if (c != '\0') { ++text; }
+        digit(start + i + (i >= skip), c, (dots & (1U << i)) != 0U);
+    }
+}
+
 void lcd_text(const char *title, const char *value, uint8_t dots)
 {
     lcd_clear();
-    bool ended = false;
-    for (unsigned i = 0; i < 4; ++i) {
-        char c = ended ? ' ' : title[i];
-        if (c == '\0') { ended = true; c = ' '; }
-        digit(i, c, false);
-    }
-    ended = false;
-    for (unsigned i = 0; i < lcd_body_width(); ++i) {
-        char c = ended ? ' ' : value[i];
-        if (c == '\0') { ended = true; c = ' '; }
-        unsigned physical = i + (unsigned)(missing_mask != 0U && i >= 2U);
-        digit(physical + 4U, c, (dots & (1U << i)) != 0U);
-    }
+    digits(title, 4U, 0U, 4U, 0U);
+    unsigned width = lcd_body_width();
+    digits(value, width, 4U, missing_mask ? 2U : width, dots);
 }
 
 void lcd_number(const char *title, int32_t value, unsigned decimals)
@@ -174,7 +174,7 @@ void lcd_number(const char *title, int32_t value, unsigned decimals)
     if (decimals > 5U) { lcd_text(title, "------", 0); return; }
     char text[7] = "      ";
     bool negative = value < 0;
-    uint32_t magnitude = negative ? (uint32_t)(-(int64_t)value) : (uint32_t)value;
+    uint32_t magnitude = negative ? 0U - (uint32_t)value : (uint32_t)value;
     unsigned width = lcd_body_width();
     unsigned at = width;
     text[width] = '\0';
@@ -194,11 +194,20 @@ void lcd_number(const char *title, int32_t value, unsigned decimals)
 
 void lcd_weight(int32_t mg, bool kg, bool stable, bool tare)
 {
-    bool negative = mg < 0;
+    uint32_t magnitude = mg < 0 ? 0U - (uint32_t)mg : (uint32_t)mg;
+    uint32_t display = (magnitude + 50U) / 100U;
+    bool negative = mg < 0 && display != 0U;
     char title[5] = {kg ? 'k' : 'g', kg ? 'g' : (negative ? '-' : ' '),
         kg && negative ? '-' : (tare ? 't' : ' '), stable ? 'S' : ' ', 0};
-    uint32_t magnitude = negative ? (uint32_t)(-(int64_t)mg) : (uint32_t)mg;
-    lcd_number(title, (int32_t)((magnitude + 50U) / 100U), kg ? 4U : 1U);
+    lcd_number(title, (int32_t)display, kg ? 4U : 1U);
+}
+
+void lcd_battery(int percent)
+{
+    /* 玻璃W1外框接主板SEG22/COM3，W5至W2接SEG23/COM0至3。 */
+    unsigned bars = percent > 0 ? ((unsigned)percent + 24U) / 25U : 0U;
+    frame[22] = 8U;
+    frame[23] = (uint8_t)((1U << bars) - 1U);
 }
 
 void lcd_test_all(void) { memset(frame, 0x0f, sizeof(frame)); }

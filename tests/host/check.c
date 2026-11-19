@@ -206,7 +206,7 @@ int main(void)
     sample_reset(); ui_event(KEY_HOLD, now);
     assert(ui.page == UI_CAL_EMPTY && flash_program_count == writes);
     ui_event(KEY_MENU,now);ui.page = UI_WEIGH;
-    assert(strcmp(set_tare(now), "ERR,WAIT_SAMPLES\r\n") == 0);
+    assert(set_tare(now) == MEAS_WAIT);
 
     /* 非线性曲线先分别换算毛重与皮重，再求净重。 */
     saved_config.spans[1] = -2400000; saved_config.spans[2] = -4900000;
@@ -216,7 +216,7 @@ int main(void)
     saved_config = recovered; tare_counts = 0;
     settle(99500, &now);
     assert(weight_state.net_mg == 500 && weight_state.display_mg == 500);
-    assert(strcmp(set_zero(now), "OK,ZERO\r\n") == 0);
+    assert(zero_at(average_counts(), now) == MEAS_OK);
     assert(zero_counts==99500);zero_counts=100000;
     settle(100000, &now);
     sample_add(-8000000, ++now);
@@ -252,7 +252,7 @@ int main(void)
     /* 毛重限制不能被去皮绕过，移走容器显示负数。 */
     settle(-2900000, &now); ui_event(KEY_TAP, now);finish_capture(-2900000,&now);
     settle(-4901000, &now); assert(weight_state.status == WEIGHT_RANGE);
-    assert(strcmp(set_tare(now), "ERR,OVERLOAD\r\n") == 0);
+    assert(set_tare(now) == MEAS_OVERLOAD);
     settle(-5150000, &now); assert(weight_state.status == WEIGHT_OVERLOAD);
     settle(100000, &now); assert(weight_state.display_mg == -3000000);
     open_item(MENU_UNTARE, now); assert(tare_counts == 0 && ui.page == UI_WEIGH);
@@ -311,6 +311,13 @@ int main(void)
     lcd_set_missing_mask(0);
     /* LCD: g/kg 小数位置、负号与溢出显示，以及菜单标题、空白和自检。 */
     lcd_weight(500,true,true,false); assert((frame[10+1] & 8U)!=0); /* 0.0005kg */
+    uint8_t zero_frame[32];
+    lcd_weight(0,true,true,false); memcpy(zero_frame, frame, sizeof(frame));
+    lcd_weight(-49,true,true,false); assert(memcmp(frame, zero_frame, sizeof(frame)) == 0);
+    lcd_weight(-50,true,true,false); assert(frame[4] == 4U); /* -0.0001kg */
+    lcd_battery(-1); assert(frame[22] == 8U && frame[23] == 0U);
+    lcd_battery(51); assert(frame[22] == 8U && frame[23] == 7U);
+    lcd_battery(100); assert(frame[23] == 15U);
     lcd_weight(500,false,true,true); assert((frame[18+1] & 8U)!=0); /* 0.5g */
     lcd_number("g",-1234,1); assert(frame[10]==2U && frame[11]==0U); /* 第二位负号 */
     lcd_number("g",1000000,0); for(unsigned i=0;i<6;++i){static const unsigned a[]={8,10,12,16,18,20};assert(frame[a[i]]==2U && frame[a[i]+1]==0U);}

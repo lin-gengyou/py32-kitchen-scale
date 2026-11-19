@@ -46,12 +46,12 @@ static void hold_checks(void)
     weight_update(now);assert(weight_state.stable && weight_state.display_mg==21000);
 
     /* 手动归零、去皮、取消去皮都立即改变输出基准；稳定负净重也能锁定。 */
-    assert(strcmp(zero_at(121000,now),"OK,ZERO\r\n")==0);
+    assert(zero_at(121000,now) == MEAS_OK);
     assert(weight_state.display_mg==0);
-    settle(131000,&now);assert(strcmp(tare_at(131000,now),"OK,TARE\r\n")==0);
+    settle(131000,&now);assert(tare_at(131000,now) == MEAS_OK);
     settle(151000,&now);assert(weight_state.display_mg==20000);
     open_item(MENU_UNTARE,now);assert(weight_state.display_mg==30000);
-    assert(strcmp(tare_at(151000,now),"OK,TARE\r\n")==0);
+    assert(tare_at(151000,now) == MEAS_OK);
     settle(141000,&now);assert(weight_state.display_mg==-10000);
     for(unsigned i=0;i<80U;++i){
         now+=100;sample_add(141000+noise[i%6],now);weight_update(now);

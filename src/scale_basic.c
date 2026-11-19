@@ -112,6 +112,8 @@ static bool watchdog_ready;
 
 /* 本机测量在松手后等待800ms，再采16个新读数，避免把按键施力写入零点。 */
 typedef enum { MEASURE_NONE, MEASURE_TARE, MEASURE_ZERO, MEASURE_CAL } MeasurementKind;
+typedef enum { MEAS_OK, MEAS_NEED_CAL, MEAS_WAIT, MEAS_UNSTABLE, MEAS_OVERLOAD,
+    MEAS_POWER, MEAS_NOT_EMPTY, MEAS_FLASH } MeasurementResult;
 static struct {
     MeasurementKind kind;
     uint32_t started, released, stamp;
@@ -126,8 +128,7 @@ static int32_t trimmed_mean(const int32_t *data, unsigned count, uint32_t *sprea
 static void weight_update(uint32_t now);
 static void wake_scale(uint32_t now);
 static void enter_standby(void);
-static const char *zero_at(int32_t counts, uint32_t now);
-static const char *tare_at(int32_t counts, uint32_t now);
+static MeasurementResult tare_at(int32_t counts, uint32_t now);
 
 
 /* 设置输出初值后再切换方向，降低上电误触发蜂鸣器和显示片选的概率。 */
@@ -421,32 +422,23 @@ static bool overloaded(uint32_t now)
            gross_milligrams(filtered_counts()) > (int64_t)MAX_GROSS_GRAMS * 1000;
 }
 
-/* 检查测量操作的共同前提，并返回本机界面可显示的原因。NULL 表示允许执行。 */
-static const char *measurement_error(uint32_t now, bool check_capacity)
+/* 检查当前采样、电源与毛重是否允许直接去皮。 */
+static MeasurementResult measurement_error(uint32_t now)
 {
     if (saved_config.battery_profile != 0U && battery_state()->status >= BATTERY_LOW) {
-        return "ERR,POWER\r\n";
+        return MEAS_POWER;
     }
     if (!samples_ready(now) || (saved_config.battery_profile != 0U && !battery_state()->valid)) {
-        return "ERR,WAIT_SAMPLES\r\n";
+        return MEAS_WAIT;
     }
-    if (check_capacity && overloaded(now)) {
-        return "ERR,OVERLOAD\r\n";
+    if (overloaded(now)) {
+        return MEAS_OVERLOAD;
     }
-    return stable ? NULL : "ERR,UNSTABLE\r\n";
+    return stable ? MEAS_OK : MEAS_UNSTABLE;
 }
 
 /* 记录当前空秤基线。已存在的计数/克比例继续有效，去皮同时清除。 */
-static const char *set_zero(uint32_t now)
-{
-    const char *error = measurement_error(now, true);
-    if (error != NULL) {
-        return error;
-    }
-    return zero_at(average_counts(), now);
-}
-
-static const char *zero_at(int32_t counts, uint32_t now)
+static MeasurementResult zero_at(int32_t counts, uint32_t now)
 {
     /* 长按明确确认空秤后，手动归零允许修正量程2%内偏移。
      * 普通称重的自动追零仍限制±0.1g，0.5g负载不会被自动吞掉。
@@ -454,7 +446,14 @@ static const char *zero_at(int32_t counts, uint32_t now)
     if (reference_grams != 0U) {
         int64_t gross = gross_milligrams(counts);
         if (gross < -100000 || gross > 100000) {
-            return "ERR,NOT_EMPTY\r\n";
+            return MEAS_NOT_EMPTY;
+        }
+        /* 保存用户确认的空盘基线，原标定跨度和比例保持不变。 */
+        int32_t previous_zero = saved_config.zero_counts;
+        saved_config.zero_counts = counts;
+        if (!scale_config_save(&saved_config)) {
+            saved_config.zero_counts = previous_zero;
+            return MEAS_FLASH;
         }
     }
     zero_counts = counts;
@@ -464,30 +463,30 @@ static const char *zero_at(int32_t counts, uint32_t now)
     empty_candidate = false;
     tare_counts = 0;
     display_locked = false;
-    weight_state.stable = false; /* 手动归零立即以新零点重新锁定。 */
+    filter_seed(counts, now);
     weight_update(now);
-    return "OK,ZERO\r\n";
+    return MEAS_OK;
 }
 
 /* 皮重仅改变净重偏移。重复去皮会替换上次皮重，毛重基线保持独立。 */
-static const char *set_tare(uint32_t now)
+static MeasurementResult set_tare(uint32_t now)
 {
     if (reference_grams == 0U) {
-        return "ERR,NEED_CAL\r\n";
+        return MEAS_NEED_CAL;
     }
-    const char *error = measurement_error(now, true);
-    if (error != NULL) {
+    MeasurementResult error = measurement_error(now);
+    if (error != MEAS_OK) {
         return error;
     }
     return tare_at(average_counts(), now);
 }
-static const char *tare_at(int32_t counts, uint32_t now)
+static MeasurementResult tare_at(int32_t counts, uint32_t now)
 {
     tare_counts = counts - zero_counts;
     empty_candidate = false;
     filter_seed(counts, now);
     weight_update(now);
-    return "OK,TARE\r\n";
+    return MEAS_OK;
 }
 
 /* 启动一组提示音。成功 1 声，操作失败 3 声，故障/超载报警 3 声。 */
@@ -599,8 +598,9 @@ static void weight_update(uint32_t now)
         return;
     }
     weight_state.motion = net < weight_state.net_mg ? MOTION_UNLOADING : MOTION_LOADING;
-    int64_t display_delta=net-weight_state.display_mg;
-    if (display_delta<0) { display_delta=-display_delta; }
+    int32_t displayed = weight_state.display_mg;
+    uint32_t display_delta = net < displayed ? (uint32_t)displayed - (uint32_t)net :
+        (uint32_t)net - (uint32_t)displayed;
     /* 低量程保留150mg抗抖余量，避免锁住偏离近0.4g的示值。 */
     uint32_t hold_band=weight_state.division_mg;
     if (hold_band==100U) { hold_band=weight_state.display_mg==0 ? 200U : 150U; }
@@ -619,7 +619,7 @@ static void weight_update(uint32_t now)
         uint32_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
         /* 动态阶段保留3/4分度滞回；进入稳定时按最新均值取整并锁定。 */
         if (stable || previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
-            display_delta*4 >= weight_state.division_mg*3U) {
+            display_delta >= (weight_state.division_mg*3U + 3U) / 4U) {
             weight_state.display_mg = (int32_t)(net < 0 ? 0U - rounded : rounded);
         }
     }
@@ -744,7 +744,7 @@ static void watchdog_start(void)
 /* 非阻塞采集；只收松手后新样本，去掉一个最高/最低，检验离散度与前后半段漂移。 */
 static void measurement_request(MeasurementKind kind, uint32_t now)
 {
-    if (kind==MEASURE_TARE && reference_grams==0U) { ui_result("ERR,NEED_CAL\r\n",now); return; }
+    if (kind==MEASURE_TARE && reference_grams==0U) { ui_result(MEAS_NEED_CAL,now); return; }
     capture.kind=kind;capture.started=capture.released=now;capture.stamp=last_sample_ms;capture.count=0;
     ui.message=NULL;
 }
@@ -753,10 +753,10 @@ static void measurement_poll(uint32_t now)
     if (capture.kind==MEASURE_NONE) { return; }
     if ((uint32_t)(now-capture.started)>20000U) {
         capture.kind=MEASURE_NONE;
-        ui_result(samples_ready(now) ? "ERR,UNSTABLE\r\n" : "ERR,WAIT_SAMPLES\r\n",now);return;
+        ui_result(samples_ready(now) ? MEAS_UNSTABLE : MEAS_WAIT,now);return;
     }
     if(saved_config.battery_profile!=0U && (!battery_state()->valid || battery_state()->status>=BATTERY_LOW)){
-        capture.kind=MEASURE_NONE;ui_result("ERR,POWER\r\n",now);return;
+        capture.kind=MEASURE_NONE;ui_result(MEAS_POWER,now);return;
     }
     if ((KEY_PORT->IDR&KEY_PIN)==0U) { capture.released=now;capture.count=0; }
     if ((uint32_t)(now-capture.released)<800U || !samples_ready(now)) {
@@ -772,8 +772,8 @@ static void measurement_poll(uint32_t now)
     if(spread>limit*2U || (uint32_t)trend>limit*4U){capture.count=0;return;}
     MeasurementKind kind=capture.kind;capture.kind=MEASURE_NONE;
     if(kind==MEASURE_CAL){ui_cal_apply(mean,now);return;}
-    const char *result;
-    if(reference_grams!=0U && gross_milligrams(mean)>(int64_t)MAX_GROSS_GRAMS*1000){result="ERR,OVERLOAD\r\n";}
+    MeasurementResult result;
+    if(reference_grams!=0U && gross_milligrams(mean)>(int64_t)MAX_GROSS_GRAMS*1000){result=MEAS_OVERLOAD;}
     else{result=kind==MEASURE_ZERO?zero_at(mean,now):tare_at(mean,now);}
     ui_result(result,now);
 }
@@ -789,7 +789,11 @@ const char *scale_remote_tare(uint32_t now)
 {
     if (local_calibrating() || capture.kind!=MEASURE_NONE) { return "ERR,BUSY\r\n"; }
     idle_since_ms = now; if (sleeping) { wake_scale(now); }
-    const char *result = set_tare(now); ui_result(result, now); return result;
+    static const char *const reply[] = {"OK,TARE\r\n", "ERR,NEED_CAL\r\n",
+        "ERR,WAIT_SAMPLES\r\n", "ERR,UNSTABLE\r\n", "ERR,OVERLOAD\r\n", "ERR,POWER\r\n"};
+    MeasurementResult result = set_tare(now);
+    ui_result(result, now);
+    return reply[result];
 }
 void scale_remote_wake(uint32_t now) { wake_scale(now); idle_since_ms = now; }
 

@@ -12,6 +12,7 @@ void lcd_clear(void);
 void lcd_text(const char *title, const char *value, uint8_t decimal_mask);
 void lcd_number(const char *title, int32_t value, unsigned decimals);
 void lcd_weight(int32_t milligrams, bool kilograms, bool stable, bool tare);
+void lcd_battery(int percent); /* -1为外部供电，仅显示外框。 */
 void lcd_test_all(void);
 void lcd_flush(void);
 bool lcd_verify_ram(void); /* 读取控制器本体并与发送帧比较。 */
