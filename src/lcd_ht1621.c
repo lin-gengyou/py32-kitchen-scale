@@ -192,13 +192,14 @@ void lcd_number(const char *title, int32_t value, unsigned decimals)
     lcd_text(title, text, decimals != 0U ? (uint8_t)(1U << (width - 1U - decimals)) : 0U);
 }
 
-void lcd_weight(int32_t mg, bool kg, bool stable, bool tare)
+void lcd_weight(int32_t mg, bool kg, bool stable, LcdWeightLabel label)
 {
     uint32_t magnitude = mg < 0 ? 0U - (uint32_t)mg : (uint32_t)mg;
     uint32_t display = (magnitude + 50U) / 100U;
     bool negative = mg < 0 && display != 0U;
     char title[5] = {kg ? 'k' : 'g', kg ? 'g' : (negative ? '-' : ' '),
-        kg && negative ? '-' : (tare ? 't' : ' '), stable ? 'S' : ' ', 0};
+        kg && negative ? '-' : label == LCD_GROSS ? 'G' : label == LCD_TARE ? 't' : ' ',
+        stable ? 'S' : ' ', 0};
     lcd_number(title, (int32_t)display, kg ? 4U : 1U);
 }
 

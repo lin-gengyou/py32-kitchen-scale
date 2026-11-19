@@ -1,15 +1,22 @@
 /*
  * 本机操作界面。与称重核心在同一编译单元内，直接复用标定、去皮和存储状态。
- * SW4：短按/双击/1.5 秒长按/3 秒长按。长按动作在松手时确认，不会先误触归零。
- * 菜单短按下一项，1.5 秒长按确认，双击返回；数字编辑双击移位，3 秒长按取消。
+ * SW4：短按切换，双击确认，长按进出菜单。数字编辑时约2秒长按换位。
  */
 typedef enum { UI_WEIGH, UI_MENU, UI_CHOICE, UI_EDIT, UI_CAL_COUNT,
-    UI_CAL_EMPTY, UI_CAL_LOAD, UI_CONFIRM_CLEAR, UI_RAW, UI_INFO, UI_TEST, UI_BATTERY, UI_CAL_VERIFY } UiPage;
-typedef enum { MENU_UNTARE, MENU_UNIT, MENU_BUZZER, MENU_OFF, MENU_STABLE,
-    MENU_RATE, MENU_CAL, MENU_RAW, MENU_INFO, MENU_ID, MENU_DATE, MENU_CLEAR,
-    MENU_TEST, MENU_SLEEP, MENU_EXIT, MENU_BATTERY, MENU_SOURCE, MENU_VREF, MENU_DISPLAY, MENU_BLUETOOTH, MENU_RESET, MENU_COUNT } UiMenu;
+    UI_CAL_EMPTY, UI_CAL_LOAD, UI_CONFIRM_CLEAR, UI_INFO=9, UI_TEST, UI_BATTERY, UI_CAL_VERIFY } UiPage;
+typedef enum { MENU_GROSS, MENU_UNIT, MENU_BUZZER, MENU_OFF, MENU_CAL, MENU_INFO,
+    MENU_DATE, MENU_CLEAR, MENU_TEST, MENU_SLEEP, MENU_BATTERY, MENU_DISPLAY,
+    MENU_BLUETOOTH, MENU_RESET, MENU_COUNT } UiMenu;
 typedef enum { KEY_TAP, KEY_DOUBLE, KEY_HOLD, KEY_MENU } KeyEvent;
-enum { EDIT_OFF, EDIT_STABLE, EDIT_RATE, EDIT_MASS, EDIT_ID, EDIT_YEAR, EDIT_MONTH, EDIT_DAY, EDIT_VREF };
+enum { EDIT_MASS, EDIT_YEAR, EDIT_MONTH, EDIT_DAY };
+static const uint16_t standby_seconds[] = {0, 30, 60, 120, 300, 600};
+static unsigned standby_choice(uint32_t seconds)
+{
+    for (unsigned i = 0; i < sizeof(standby_seconds)/sizeof(standby_seconds[0]); ++i) {
+        if (standby_seconds[i] == seconds) { return i; }
+    }
+    return 3U;
+}
 
 static struct {
     UiPage page;
@@ -21,7 +28,7 @@ static struct {
     ScaleConfig calibration;           /* 标定过程先写草稿，最后一次性提交。 */
     uint32_t cal_zero_ms, cal_load_ms[3];
 } ui;
-static uint32_t display_interval_ms = 200;
+static const uint32_t display_interval_ms = 200;
 
 static void ui_message(const char *text, bool ok, uint32_t now)
 {
@@ -77,22 +84,12 @@ static void ui_confirm_edit(uint32_t now)
     if (ui.value < ui.minimum || ui.value > ui.maximum) { ui_message("rAnGE", false, now); return; }
     ScaleConfig candidate = saved_config;
     switch (ui.edit_kind) {
-    case EDIT_OFF: candidate.auto_off_seconds = ui.value; break;
-    case EDIT_STABLE: candidate.stable_counts = ui.value; break;
-    case EDIT_VREF: candidate.battery_reference_mv = ui.value; break;
-    case EDIT_RATE: candidate.display_interval_ms = ui.value; break;
     case EDIT_MASS:
         if (ui.cal_index != 0U && ui.value <= ui.calibration.grams[ui.cal_index - 1U]) {
             ui_message("OrdEr", false, now); return;
         }
         ui.calibration.grams[ui.cal_index] = ui.value;
         ui.page = UI_CAL_LOAD; return;
-    case EDIT_ID:
-        memcpy(candidate.device_id, "SCALE-000000", 13);
-        for (unsigned i = 0; i < 6; ++i) {
-            candidate.device_id[11U - i] = (char)('0' + ui.value / power10(i) % 10U);
-        }
-        break;
     case EDIT_YEAR:
         ui.edit_year = ui.value;
         ui_edit(EDIT_MONTH, saved_config.calibration_date / 100U % 100U, 1, 12);
@@ -108,32 +105,31 @@ static void ui_confirm_edit(uint32_t now)
     default: return;
     }
     ui_save(&candidate, now);
-    display_interval_ms = saved_config.display_interval_ms;
-    if (ui.edit_kind == EDIT_STABLE && ui.page == UI_MENU) { sample_reset(); }
 }
 
 static void ui_begin_item(uint32_t now)
 {
     switch (ui.menu) {
-    case MENU_UNTARE: tare_counts = 0; weight_update(now); ui.page = UI_WEIGH; ui_message("donE", true, now); break;
+    case MENU_GROSS:
+        show_gross = !show_gross;
+        display_locked = false;
+        weight_state.status = WEIGHT_WAIT;
+        weight_update(now);
+        ui.page = UI_WEIGH;
+        break;
     case MENU_UNIT: ui.page = UI_CHOICE; ui.choice = saved_config.unit; break;
     case MENU_BUZZER: ui.page = UI_CHOICE; ui.choice = saved_config.buzzer_mode; break;
-    case MENU_OFF: ui_edit(EDIT_OFF, saved_config.auto_off_seconds, 0, 86400); break;
-    case MENU_STABLE: ui_edit(EDIT_STABLE, saved_config.stable_counts, 0, 1000000); break;
-    case MENU_RATE: ui_edit(EDIT_RATE, display_interval_ms, 100, 200); break;
+    case MENU_OFF:
+        ui.page = UI_CHOICE; ui.choice = standby_choice(saved_config.auto_off_seconds);
+        break;
     case MENU_CAL: ui.page = UI_CAL_COUNT; ui.cal_count = 1; break;
-    case MENU_RAW: ui.page = UI_RAW; ui.info_page = 0; break;
     case MENU_INFO: ui.page = UI_INFO; ui.info_page = 0; break;
-    case MENU_ID: ui_edit(EDIT_ID, ui_device_number(), 0, 999999); break;
     case MENU_DATE: ui_edit(EDIT_YEAR, saved_config.calibration_date / 10000U, 2000, 9999);
         if (ui.value == 0U) { ui.value = 2026; } break;
     case MENU_CLEAR: ui.page = UI_CONFIRM_CLEAR; break;
     case MENU_TEST: ui.page = UI_TEST; ui.info_page = 0; break;
     case MENU_SLEEP: ui.page = UI_WEIGH; enter_standby(); break;
-    case MENU_EXIT: ui.page = UI_WEIGH; break;
     case MENU_BATTERY: ui.page = UI_BATTERY; ui.info_page = 0; break;
-    case MENU_SOURCE: ui.page = UI_CHOICE; ui.choice = saved_config.battery_profile; break;
-    case MENU_VREF: ui_edit(EDIT_VREF, saved_config.battery_reference_mv, 1000, 1400); break;
     case MENU_DISPLAY: ui.page = UI_CHOICE; ui.choice = saved_config.lcd_missing_mask != 0U; break;
     case MENU_BLUETOOTH: ui.page = UI_CHOICE; ui.choice = saved_config.bluetooth_enabled; break;
     case MENU_RESET: ui.page = UI_CONFIRM_CLEAR; break;
@@ -192,33 +188,34 @@ static void ui_cal_apply(int32_t counts, uint32_t now)
     zero_set = true; empty_reference_known = true; empty_candidate = false; tare_counts = 0;
     ui.page = UI_WEIGH;
     filter_seed(counts,now);
+    show_gross = false;
+    zero_locked = true;
     ui_message("SAvEd", true, now);
 }
 
 static void ui_event(KeyEvent event, uint32_t now)
 {
     idle_since_ms = now;
-    if(capture.kind!=MEASURE_NONE){
+    if (capture.kind!=MEASURE_NONE) {
+        if (event != KEY_MENU && event != KEY_HOLD) { return; }
         capture.kind=MEASURE_NONE;
-        if(ui.page==UI_WEIGH){ui_message("donE",true,now);return;}
+        if(ui.page==UI_WEIGH){ui_message("CAnCL",true,now);return;}
     }
     buzzer_start(1, now);
     ui.message = NULL;
     if (ui.page == UI_WEIGH) {
-        if (event == KEY_MENU) { ui.page = UI_MENU; ui.menu = MENU_UNTARE; }
-        else if (event == KEY_HOLD) { measurement_request(MEASURE_ZERO,now); }
+        if (event == KEY_MENU || event == KEY_HOLD) { ui.page = UI_MENU; ui.menu = MENU_GROSS; }
+        else if (event == KEY_DOUBLE) { measurement_request(MEASURE_ZERO,now); }
         else if (event == KEY_TAP) { measurement_request(MEASURE_TARE,now); }
-        else {
-            ScaleConfig candidate = saved_config; candidate.unit ^= 1U;
-            if (save_settings(&candidate)) { ui_message(candidate.unit ? "kg" : "g", true, now); }
-            else { ui_message("FLASH", false, now); }
-        }
         return;
     }
-    if (event == KEY_MENU) { ui.page = UI_MENU; return; } /* 长按3秒：取消当前编辑/标定。 */
+    if (event == KEY_MENU || (event == KEY_HOLD && ui.page != UI_EDIT)) {
+        ui.page = ui.page == UI_MENU ? UI_WEIGH : UI_MENU;
+        return;
+    }
     if (ui.page == UI_EDIT) {
-        if (event == KEY_HOLD) { ui_confirm_edit(now); }
-        else if (event == KEY_DOUBLE) {
+        if (event == KEY_DOUBLE) { ui_confirm_edit(now); }
+        else if (event == KEY_HOLD) {
             unsigned digits = 1; while (power10(digits) <= ui.maximum) { ++digits; }
             ui.cursor = (ui.cursor + 1U) % digits;
         } else {
@@ -228,17 +225,16 @@ static void ui_event(KeyEvent event, uint32_t now)
         }
         return;
     }
-    if (event == KEY_DOUBLE) { ui.page = ui.page == UI_MENU ? UI_WEIGH : UI_MENU; return; }
     if (ui.page == UI_MENU) {
         if (event == KEY_TAP) { ui.menu = (UiMenu)((ui.menu + 1U) % MENU_COUNT); }
         else { ui_begin_item(now); }
     } else if (ui.page == UI_CHOICE) {
-        if (event == KEY_TAP) { ui.choice = (ui.choice + 1U) % (ui.menu == MENU_SOURCE ? 4U : ui.menu == MENU_BUZZER ? 3U : 2U); }
+        if (event == KEY_TAP) { ui.choice = (ui.choice + 1U) % (ui.menu == MENU_OFF ? 6U : ui.menu == MENU_BUZZER ? 3U : 2U); }
         else {
             ScaleConfig candidate = saved_config;
             if (ui.menu == MENU_UNIT) { candidate.unit = ui.choice; }
             else if (ui.menu == MENU_BUZZER) { candidate.buzzer_mode = ui.choice; }
-            else if (ui.menu == MENU_SOURCE) { candidate.battery_profile = ui.choice; }
+            else if (ui.menu == MENU_OFF) { candidate.auto_off_seconds = standby_seconds[ui.choice]; }
             else if (ui.menu == MENU_DISPLAY) { candidate.lcd_missing_mask = ui.choice ? 4U : 0U; }
             else { candidate.bluetooth_enabled = ui.choice; }
             ui_save(&candidate, now);
@@ -247,24 +243,24 @@ static void ui_event(KeyEvent event, uint32_t now)
         if (event == KEY_TAP) { ui.cal_count = ui.cal_count % 3U + 1U; }
         else { ui.page = UI_CAL_EMPTY; }
     } else if (ui.page == UI_CAL_EMPTY || ui.page == UI_CAL_LOAD || ui.page==UI_CAL_VERIFY) {
-        if (event == KEY_HOLD) { measurement_request(MEASURE_CAL,now); }
-    } else if (ui.page == UI_CONFIRM_CLEAR && event == KEY_HOLD) {
+        if (event == KEY_DOUBLE) { measurement_request(MEASURE_CAL,now); }
+    } else if (ui.page == UI_CONFIRM_CLEAR && event == KEY_DOUBLE) {
         ScaleConfig candidate = saved_config;
         if (ui.menu == MENU_RESET) { scale_config_defaults(&candidate); }
         candidate.point_count = 0; candidate.zero_counts = 0;
         memset(candidate.spans, 0, sizeof(candidate.spans)); memset(candidate.grams, 0, sizeof(candidate.grams));
         if (save_settings(&candidate)) {
             zero_counts = 0; reference_grams = 0; tare_counts = 0; zero_set = false; empty_reference_known = false;
-            display_interval_ms = saved_config.display_interval_ms;
+            show_gross = false; zero_locked = false;
             ui.page = UI_WEIGH; ui_message("CLr", true, now);
         } else { ui_message("FLASH", false, now); }
-    } else if (ui.page == UI_RAW || ui.page == UI_INFO || ui.page == UI_TEST || ui.page == UI_BATTERY) {
-        if (event == KEY_HOLD) { ui.page = UI_MENU; }
+    } else if (ui.page == UI_INFO || ui.page == UI_TEST || ui.page == UI_BATTERY) {
+        if (event == KEY_DOUBLE) { ui.page = UI_MENU; }
         else { ++ui.info_page; }
     }
 }
 
-/* 30ms消抖，300ms双击窗口。短按延后确认，双击不会先执行一次去皮。 */
+/* 30ms消抖，350ms双击窗口。短按延后确认，双击不会先执行一次去皮。 */
 static void key_poll(uint32_t now)
 {
     static bool physical, debounced, pending, wake_press, second_press;
@@ -275,7 +271,7 @@ static void key_poll(uint32_t now)
     if (pressed != debounced && (uint32_t)(now - changed) >= KEY_DEBOUNCE_MS) {
         debounced = pressed;
         if (pressed) {
-            second_press = pending && (uint32_t)(now - released) <= 300U;
+            second_press = pending && (uint32_t)(now - released) <= 350U;
             if (pending && !second_press) { pending = false; ui_event(KEY_TAP, now); }
             down = now;
             wake_press = sleeping;
@@ -289,7 +285,7 @@ static void key_poll(uint32_t now)
             } else { pending = true; released = now; }
         }
     }
-    if (pending && !debounced && (uint32_t)(now - released) > 300U) {
+    if (pending && !debounced && (uint32_t)(now - released) > 350U) {
         pending = false; ui_event(KEY_TAP, now);
     }
 }
@@ -305,7 +301,8 @@ static void ui_render(uint32_t now)
     else if (ui.message != NULL && (uint32_t)(now - ui.message_ms) < 1200U) { lcd_text("", ui.message, 0); }
     else if (ui.page == UI_WEIGH) {
         switch (weight_state.status) {
-        case WEIGHT_OK: lcd_weight(weight_state.display_mg, saved_config.unit != 0U, weight_state.stable, tare_counts != 0); break;
+        case WEIGHT_OK: lcd_weight(weight_state.display_mg, saved_config.unit != 0U, weight_state.stable,
+                show_gross ? LCD_GROSS : tare_counts != 0 ? LCD_TARE : LCD_NORMAL); break;
         case WEIGHT_UNCALIBRATED: lcd_text("CAL", "noCAL", 0); break;
         case WEIGHT_SENSOR_ERROR: lcd_text("Err", "SEnSr", 0); break;
         case WEIGHT_LOW_BATTERY: lcd_number("bAtt", battery_state()->millivolts, 3); break;
@@ -314,15 +311,19 @@ static void ui_render(uint32_t now)
         case WEIGHT_OVERLOAD: lcd_text("Err", "  OL", 0); break;
         default: lcd_text("", "------", 0); break;
         }
-        if (battery_state()->valid) { lcd_battery(battery_state()->percent); }
+        const BatteryState *power = battery_state();
+        if (power->valid && (power->status < BATTERY_LOW || now / 500U % 2U)) { lcd_battery(power->percent); }
     } else if (ui.page == UI_MENU || ui.page == UI_CHOICE) {
         /* 七段屏用数字编号，避免将长单词拼成难辨认的字形。 */
         unsigned code = (unsigned)ui.menu + 1U;
         char title[5] = {' ', ' ', (char)('0' + code / 10U), (char)('0' + code % 10U), 0};
         if (ui.page == UI_MENU) { lcd_text(title, "", 0); }
+        else if (ui.menu == MENU_UNIT) { lcd_text(title, ui.choice ? "kg" : "g", 0); }
+        else if (ui.menu == MENU_OFF) { lcd_number(title, standby_seconds[ui.choice], 0); }
+        else if (ui.menu == MENU_DISPLAY) { lcd_number(title, 6U - ui.choice, 0); }
         else { lcd_number(title, (int32_t)ui.choice, 0); }
     } else if (ui.page == UI_EDIT) {
-        static const char *const titles[] = {"OFF","StAb","rAtE","CAL","Id","YEAr","Mon","dAY","1800"};
+        static const char *const titles[] = {"CAL","YEAr","Mon","dAY"};
         unsigned width = lcd_body_width();
         unsigned low = ui.cursor >= width ? ui.cursor - width + 1U : 0U;
         uint32_t part = ui.value / power10(low);
@@ -330,7 +331,7 @@ static void ui_render(uint32_t now)
         text[width] = '\0';
         for (unsigned i = 0; i < width; ++i) { text[width - 1U - i] = (char)('0' + part % 10U); part /= 10U; }
         /* 砝码质量按实际位数显示；空白前导位不占据已知缺段的第三位。
-         * 被选中的高位仍显示0，保留双击移位编辑的能力。
+         * 被选中的高位仍显示0，便于逐位修改。
          */
         unsigned selected = width - 1U - (ui.cursor - low);
         if (ui.edit_kind == EDIT_MASS) {
@@ -345,14 +346,8 @@ static void ui_render(uint32_t now)
     else if (ui.page == UI_CAL_LOAD) {
         char title[5] = {'C',(char)('1' + ui.cal_index), 'g', stable && samples_ready(now) ? 'S' : ' ',0};
         lcd_number(title, (int32_t)ui.calibration.grams[ui.cal_index], 0);
-    } else if (ui.page == UI_CONFIRM_CLEAR) { lcd_text(ui.menu == MENU_RESET ? "2100" : "1200", "SUrE", 0); }
-    else if (ui.page == UI_RAW) {
-        int32_t value = latest_raw;
-        uint32_t magnitude = value < 0 ? 0U - (uint32_t)value : (uint32_t)value;
-        if (ui.info_page % 3U == 0U) { lcd_number(value < 0 ? "rA-L" : "rAWL", (int32_t)(magnitude % power10(lcd_body_width())), 0); }
-        else if (ui.info_page % 3U == 1U) { lcd_number("rAWH", counts_divide(value,power10(lcd_body_width())), 0); }
-        else { lcd_number("rSt",(int32_t)hx711_restarts,0); }
-    } else if (ui.page == UI_INFO) {
+    } else if (ui.page == UI_CONFIRM_CLEAR) { lcd_text(ui.menu == MENU_RESET ? "1400" : "0800", "SUrE", 0); }
+    else if (ui.page == UI_INFO) {
         switch (ui.info_page % 7U) {
         case 0: lcd_text("vEr", SCALE_VERSION_DISPLAY, 0x03); break;
         case 1: lcd_number("IdH", (int32_t)(ui_device_number() / power10(lcd_body_width())), 0); break;
@@ -364,10 +359,10 @@ static void ui_render(uint32_t now)
         }
     } else if (ui.page == UI_BATTERY) {
         const BatteryState *power = battery_state();
-        unsigned page = ui.info_page % 5U;
-        char title[5] = {'1','6','0',(char)('1' + page),0};
+        unsigned page = ui.info_page % 4U;
+        char title[5] = {'1','1','0',(char)('1' + page),0};
         int32_t value = page == 0U ? power->millivolts : page == 1U ? power->supply_mv :
-            page == 2U ? power->percent : page == 3U ? power->status : (int32_t)saved_config.battery_profile;
+            page == 2U ? power->percent : power->status;
         if ((page < 2U && !power->valid) || (page == 2U && value < 0)) {
             lcd_text(title, "-----", 0);
         } else { lcd_number(title, value, 0); }
@@ -375,7 +370,7 @@ static void ui_render(uint32_t now)
         if (ui.info_page % 4U == 0U) { lcd_test_all(); }
         else if (ui.info_page % 4U == 1U) { lcd_text("1234", "123456", 0x1f); }
         else if (ui.info_page % 4U == 2U) { lcd_clear(); }
-        else { lcd_number("1304", (int32_t)lcd_ram_result(), 0); }
+        else { lcd_number("0904", (int32_t)lcd_ram_result(), 0); }
     }
     lcd_flush();
     /* 结果页保留上一幅测试图的核对结果；全亮/数字/空白页实际读回HT1621。 */

@@ -7,26 +7,26 @@ static void accuracy_checks(void)
     zero_counts=100000;reference_grams=500;tare_counts=0;stable_counts=0;
     sleeping=false;capture.kind=MEASURE_NONE;battery_configure(0,1200);host_gpio_b.IDR=KEY_PIN;
     sample_reset();settle(101500,&now); /* 长按时的1.5g施力，旧算法会误存为零点。 */
-    open_item(MENU_CAL,now);ui_event(KEY_HOLD,now);assert(ui.page==UI_CAL_EMPTY);
+    open_item(MENU_CAL,now);ui_event(KEY_DOUBLE,now);assert(ui.page==UI_CAL_EMPTY);
     unsigned before=flash_program_count;
-    ui_event(KEY_HOLD,now);assert(capture.kind==MEASURE_CAL);
+    ui_event(KEY_DOUBLE,now);assert(capture.kind==MEASURE_CAL);
     for(unsigned i=0;i<7;++i){now+=100;sample_add(101500,now);measurement_poll(now);}
     assert(capture.count==0); /* 松手等待期完全不采入。 */
     finish_capture(100000,&now);
     assert(ui.page==UI_EDIT && ui.calibration.zero_counts==100000 && saved_config.grams[0]==500);
-    ui.value=20;ui_event(KEY_HOLD,now);assert(ui.page==UI_CAL_LOAD);
-    settle(121500,&now);ui_event(KEY_HOLD,now);finish_capture(120000,&now);
+    ui.value=20;ui_event(KEY_DOUBLE,now);assert(ui.page==UI_CAL_LOAD);
+    settle(121500,&now);ui_event(KEY_DOUBLE,now);finish_capture(120000,&now);
     assert(ui.page==UI_CAL_VERIFY && ui.calibration.spans[0]==20000 && flash_program_count==before);
-    ui_event(KEY_HOLD,now);finish_capture(100500,&now); /* 留着0.5g，不能当成回零成功。 */
+    ui_event(KEY_DOUBLE,now);finish_capture(100500,&now); /* 留着0.5g，不能当成回零成功。 */
     assert(ui.page==UI_CAL_VERIFY && strcmp(ui.message,"drFt")==0 && flash_program_count==before);
     assert(saved_config.grams[0]==500);
     /* 保存失败不能逐次挪动草稿零点，让连续小漂移绕过最初回零检查。 */
-    erase_failure=true;ui_event(KEY_HOLD,now);finish_capture(100100,&now);erase_failure=false;
+    erase_failure=true;ui_event(KEY_DOUBLE,now);finish_capture(100100,&now);erase_failure=false;
     assert(ui.page==UI_CAL_VERIFY && strcmp(ui.message,"FLASH")==0);
     assert(ui.calibration.zero_counts==100000 && ui.calibration.spans[0]==20000);
-    ui_event(KEY_HOLD,now);finish_capture(100300,&now);
+    ui_event(KEY_DOUBLE,now);finish_capture(100300,&now);
     assert(ui.page==UI_CAL_VERIFY && strcmp(ui.message,"drFt")==0);
-    ui_event(KEY_HOLD,now);finish_capture(100000,&now);
+    ui_event(KEY_DOUBLE,now);finish_capture(100000,&now);
     assert(ui.page==UI_WEIGH && saved_config.grams[0]==20 && zero_counts==100000);
     settle(120000,&now);assert(weight_state.display_mg==20000);
     settle(100000,&now);assert(weight_state.display_mg==0);
@@ -39,7 +39,7 @@ static void accuracy_checks(void)
     static const uint32_t load_times[]={2000,5000,8000};
     static const uint32_t masses[]={20,500,1000};
     for(unsigned i=0;i<3;++i){
-        ui.value=masses[i];ui_event(KEY_HOLD,start+load_times[i]-1000U);
+        ui.value=masses[i];ui_event(KEY_DOUBLE,start+load_times[i]-1000U);
         ui_cal_apply(100000+(int32_t)(masses[i]*1000U+load_times[i]/100U),start+load_times[i]);
     }
     assert(ui.page==UI_CAL_VERIFY);
@@ -50,6 +50,7 @@ static void accuracy_checks(void)
     assert(gross_milligrams(350100)==250000);
     /* 继续用原测试零点验证去皮和追零。 */
     zero_counts=100000;
+    zero_locked=false;
 
     /* 去皮同样只使用释放后的容器读数，按压附加1.5g不进入皮重。 */
     settle(111500,&now);ui_event(KEY_TAP,now);assert(capture.kind==MEASURE_TARE);
@@ -60,7 +61,7 @@ static void accuracy_checks(void)
     tare_counts=0;
 
     /* 人工明确确认空秤时可修正3.8g偏移，自动追零依旧保留0.5g小负载。 */
-    settle(105300,&now);ui_event(KEY_HOLD,now);finish_capture(103800,&now);
+    settle(105300,&now);ui_event(KEY_DOUBLE,now);finish_capture(103800,&now);
     assert(zero_counts==103800 && tare_counts==0 && weight_state.display_mg == 0);
     ScaleConfig reboot_config;
     assert(scale_config_load(&reboot_config) && reboot_config.zero_counts == 103800);
@@ -92,7 +93,7 @@ static void accuracy_checks(void)
     }
     uint32_t unit=saved_config.unit;
     ui_event(KEY_TAP,now);assert(capture.kind==MEASURE_TARE);
-    ui_event(KEY_DOUBLE,now);assert(capture.kind==MEASURE_NONE && saved_config.unit==unit);
+    ui_event(KEY_HOLD,now);assert(capture.kind==MEASURE_NONE && saved_config.unit==unit);
     /* 采到一半遇到ADC故障，恢复后必须整组重采，不能混入故障前的旧样本。 */
     ui_event(KEY_TAP,now);
     for(unsigned i=0;i<15;++i){now+=100;sample_add(zero_counts+500,now);measurement_poll(now);}

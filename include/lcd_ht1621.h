@@ -11,7 +11,8 @@ void lcd_power(bool enabled);
 void lcd_clear(void);
 void lcd_text(const char *title, const char *value, uint8_t decimal_mask);
 void lcd_number(const char *title, int32_t value, unsigned decimals);
-void lcd_weight(int32_t milligrams, bool kilograms, bool stable, bool tare);
+typedef enum { LCD_NORMAL, LCD_TARE, LCD_GROSS } LcdWeightLabel;
+void lcd_weight(int32_t milligrams, bool kilograms, bool stable, LcdWeightLabel label);
 void lcd_battery(int percent); /* -1为外部供电，仅显示外框。 */
 void lcd_test_all(void);
 void lcd_flush(void);

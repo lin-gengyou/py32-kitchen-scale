@@ -84,6 +84,9 @@ static int32_t stable_anchor;
 /* 运行时空载与去皮偏移。标定的各段计数允许为负，适配输出方向相反的传感器。 */
 static int32_t zero_counts;
 static int32_t tare_counts;
+static bool show_gross;
+static bool zero_locked;
+static unsigned zero_excursion;
 static uint32_t reference_grams;
 static bool zero_set;
 
@@ -104,7 +107,6 @@ static int32_t latest_raw;
 static bool empty_reference_known;
 static bool empty_candidate;
 static uint32_t empty_since_ms;
-static uint32_t zero_track_ms;
 static uint32_t idle_since_ms;
 static bool sleeping;
 static IWDG_HandleTypeDef watchdog;
@@ -200,6 +202,8 @@ static bool hx711_read(int32_t *counts)
 /* 故障或阈值变化后清空旧窗口，防止拿旧数据归零、去皮或判定稳定。 */
 static void sample_reset(void)
 {
+    zero_locked = false;
+    zero_excursion = 0U;
     sample_count = 0;
     sample_index = 0;
     settling = false;
@@ -264,12 +268,27 @@ static void sample_add(int32_t counts, uint32_t now)
     if (a > b) { int32_t swap = a; a = b; b = swap; }
     if (b > c) { b = c; }
     counts = a > b ? a : b;
+    uint32_t limit = stability_limit();
+    if (zero_locked && tare_counts == 0) {
+        int32_t difference = counts - zero_counts;
+        int32_t step = counts - samples[(sample_index + AVERAGE_SAMPLES - 1U) % AVERAGE_SAMPLES];
+        uint32_t distance = difference < 0 ? (uint32_t)-difference : (uint32_t)difference;
+        uint32_t speed = step < 0 ? (uint32_t)-step : (uint32_t)step;
+        uint32_t trip = limit + (limit + 1U) / 2U;
+        /* 逐帧跟踪慢漂。阶跃时冻结零点，连续三帧确认后转入称重。 */
+        if (distance > 4U * limit || (distance > trip && (speed > trip || zero_excursion != 0U))) {
+            if (++zero_excursion >= 3U) { zero_locked = false; }
+        } else {
+            zero_excursion = 0U;
+            zero_counts += difference / 2;
+        }
+    }
     if (sample_count < AVERAGE_SAMPLES) { ++sample_count; }
     samples[sample_index] = counts;
     sample_index = (sample_index + 1U) % AVERAGE_SAMPLES;
 
     if(sample_count<AVERAGE_SAMPLES){settling=false;stable=false;return;}
-    uint32_t spread,limit=stability_limit();
+    uint32_t spread;
     int32_t mean=trimmed_mean(samples,sample_count,&spread);
     if (stable) {
         int32_t shift = mean - stable_anchor;
@@ -397,16 +416,11 @@ static bool save_settings(const ScaleConfig *candidate)
     if (!scale_config_save(candidate)) {
         return false;
     }
-    if (candidate->battery_profile != saved_config.battery_profile ||
-        candidate->battery_reference_mv != saved_config.battery_reference_mv) {
-        battery_configure(candidate->battery_profile, candidate->battery_reference_mv);
-    }
     lcd_set_missing_mask(candidate->lcd_missing_mask);
     if (candidate->bluetooth_enabled != saved_config.bluetooth_enabled) {
         ble_configure(candidate->bluetooth_enabled != 0U);
     }
     saved_config = *candidate;
-    stable_counts = candidate->stable_counts;
     buzzer_mode = (BuzzerMode)candidate->buzzer_mode;
     if (buzzer_mode == BUZZER_OFF) {
         buzzer_remaining = 0; buzzer_on = false;
@@ -423,12 +437,19 @@ static bool overloaded(uint32_t now)
 }
 
 /* 检查当前采样、电源与毛重是否允许直接去皮。 */
+/* 电池偏低时仍可称重，稳压输出不足或ADC故障时暂停。 */
+static bool power_fault(void)
+{
+    const BatteryState *power = battery_state();
+    return power->status == BATTERY_ADC_ERROR || (power->valid && power->supply_mv < 4500U);
+}
+
 static MeasurementResult measurement_error(uint32_t now)
 {
-    if (saved_config.battery_profile != 0U && battery_state()->status >= BATTERY_LOW) {
+    if (power_fault()) {
         return MEAS_POWER;
     }
-    if (!samples_ready(now) || (saved_config.battery_profile != 0U && !battery_state()->valid)) {
+    if (!samples_ready(now)) {
         return MEAS_WAIT;
     }
     if (overloaded(now)) {
@@ -464,6 +485,7 @@ static MeasurementResult zero_at(int32_t counts, uint32_t now)
     tare_counts = 0;
     display_locked = false;
     filter_seed(counts, now);
+    zero_locked = true;
     weight_update(now);
     return MEAS_OK;
 }
@@ -483,6 +505,7 @@ static MeasurementResult set_tare(uint32_t now)
 static MeasurementResult tare_at(int32_t counts, uint32_t now)
 {
     tare_counts = counts - zero_counts;
+    show_gross = false;
     empty_candidate = false;
     filter_seed(counts, now);
     weight_update(now);
@@ -561,12 +584,9 @@ static void weight_update(uint32_t now)
         weight_state.motion = MOTION_SLEEP;
         return;
     }
-    if (saved_config.battery_profile != 0U && power->status >= BATTERY_LOW) {
+    if (power_fault()) {
         weight_state.status = power->status == BATTERY_ADC_ERROR ? WEIGHT_POWER_ERROR : WEIGHT_LOW_BATTERY;
         weight_state.motion = MOTION_FAULT; return;
-    }
-    if (saved_config.battery_profile != 0U && !power->valid) {
-        weight_state.status = WEIGHT_WAIT; weight_state.motion = MOTION_CANDIDATE; return;
     }
     if (sample_fault || adc_saturated || (uint32_t)(now - last_sample_ms) >= HX711_TIMEOUT_MS) {
         weight_state.status = WEIGHT_SENSOR_ERROR;
@@ -584,7 +604,7 @@ static void weight_update(uint32_t now)
         return;
     }
     int64_t gross = gross_milligrams(filtered_counts());
-    int64_t tare = gross_milligrams(zero_counts + tare_counts);
+    int64_t tare = show_gross ? 0 : gross_milligrams(zero_counts + tare_counts);
     int64_t net = gross - tare;
     if (gross >= (int64_t)OL_GRAMS * 1000) {
         weight_state.status = WEIGHT_OVERLOAD;
@@ -601,10 +621,10 @@ static void weight_update(uint32_t now)
     int32_t displayed = weight_state.display_mg;
     uint32_t display_delta = net < displayed ? (uint32_t)displayed - (uint32_t)net :
         (uint32_t)net - (uint32_t)displayed;
-    /* 低量程保留150mg抗抖余量，避免锁住偏离近0.4g的示值。 */
+    /* 锁定后的示值在小幅波动内保持，空盘锁定使用独立状态。 */
     uint32_t hold_band=weight_state.division_mg;
-    if (hold_band==100U) { hold_band=weight_state.display_mg==0 ? 200U : 150U; }
-    bool at_zero=stable && (uint32_t)net+200U<=400U;
+    if (hold_band==100U) { hold_band=300U; }
+    bool at_zero=(zero_locked && tare_counts == 0) || (stable && (uint32_t)net+200U<=400U);
     held = held && weight_state.tare_mg == (int32_t)tare && display_delta<hold_band &&
         (!at_zero || weight_state.display_mg==0);
     weight_state.gross_mg = (int32_t)gross;
@@ -618,13 +638,13 @@ static void weight_update(uint32_t now)
         if (at_zero) { net=0; magnitude=0; }
         uint32_t rounded = ((magnitude + weight_state.division_mg / 2) / weight_state.division_mg) * weight_state.division_mg;
         /* 动态阶段保留3/4分度滞回；进入稳定时按最新均值取整并锁定。 */
-        if (stable || previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
+        if (at_zero || stable || previous_status!=WEIGHT_OK || previous_division!=weight_state.division_mg ||
             display_delta >= (weight_state.division_mg*3U + 3U) / 4U) {
             weight_state.display_mg = (int32_t)(net < 0 ? 0U - rounded : rounded);
         }
     }
     display_locked=held || stable;
-    weight_state.stable = stable;
+    weight_state.stable = stable || at_zero;
     weight_state.status = WEIGHT_OK;
     if (stable) {
         weight_state.motion = MOTION_STABLE;
@@ -669,18 +689,19 @@ static void wake_scale(uint32_t now)
     weight_update(now);
 }
 
-/* 仅在已知空秤基线附近、无皮重、原始值和滤波值都在 ±0.1g 内时允许跟踪。 */
+/* 保存基线附近确认空盘，启动时可补偿小幅负零偏。 */
 static void power_poll(uint32_t now)
 {
     if (sleeping) {
         return;
     }
     weight_update(now);
+    int32_t lower = startup_zero_pending ? -1500 : -200;
     bool empty = empty_reference_known && tare_counts == 0 && weight_state.status == WEIGHT_OK &&
-                 weight_state.stable && weight_state.net_mg >= -100 && weight_state.net_mg <= 100;
-    if (empty) {
+                 (zero_locked || (stable && weight_state.gross_mg >= lower && weight_state.gross_mg <= 200));
+    if (empty && !zero_locked) {
         int64_t raw_mg = gross_milligrams(latest_raw);
-        empty = raw_mg >= -100 && raw_mg <= 100;
+        empty = raw_mg >= lower && raw_mg <= 200;
     }
     if (!empty) {
         empty_candidate = false;
@@ -690,22 +711,17 @@ static void power_poll(uint32_t now)
     if (!empty_candidate) {
         empty_candidate = true;
         empty_since_ms = now;
-        zero_track_ms = now;
     }
     if ((uint32_t)(now - empty_since_ms) < EMPTY_CONFIRM_MS) {
         return;
     }
-    if (startup_zero_pending) {
+    if (!zero_locked) {
         zero_counts = average_counts(); startup_zero_pending = false;
+        zero_locked = true;
+        zero_excursion = 0U;
         weight_update(now);
     }
     weight_state.motion = MOTION_EMPTY;
-    if ((uint32_t)(now - zero_track_ms) >= 1000U) {
-        /* 确认空载3秒后缓慢追零；1/4避免旧版/64在小于64计数时永远截断为0。 */
-        int32_t step=(average_counts()-zero_counts)/4;
-        zero_counts+=step;stable_anchor+=step;
-        zero_track_ms = now;
-    }
     if (saved_config.auto_off_seconds != 0U &&
         (uint32_t)(now - idle_since_ms) >= saved_config.auto_off_seconds * 1000U) {
         enter_standby();
@@ -755,7 +771,7 @@ static void measurement_poll(uint32_t now)
         capture.kind=MEASURE_NONE;
         ui_result(samples_ready(now) ? MEAS_UNSTABLE : MEAS_WAIT,now);return;
     }
-    if(saved_config.battery_profile!=0U && (!battery_state()->valid || battery_state()->status>=BATTERY_LOW)){
+    if(power_fault()){
         capture.kind=MEASURE_NONE;ui_result(MEAS_POWER,now);return;
     }
     if ((KEY_PORT->IDR&KEY_PIN)==0U) { capture.released=now;capture.count=0; }
@@ -803,9 +819,9 @@ int main(void)
     HAL_Init();
     board_init();
     scale_config_load(&saved_config);
-    battery_configure(saved_config.battery_profile, saved_config.battery_reference_mv);
+    saved_config.auto_off_seconds = standby_seconds[standby_choice(saved_config.auto_off_seconds)];
+    battery_configure(BATTERY_ALKALINE_2S, 1200U);
     lcd_set_missing_mask(saved_config.lcd_missing_mask);
-    stable_counts = saved_config.stable_counts;
     buzzer_mode = (BuzzerMode)saved_config.buzzer_mode;
     zero_counts = saved_config.zero_counts;
     if (saved_config.point_count != 0U) {
@@ -817,7 +833,6 @@ int main(void)
     started_ms = HAL_GetTick();
     hx711_restart(started_ms);
     ui.startup_ms = started_ms;
-    display_interval_ms = saved_config.display_interval_ms;
     lcd_init();
     battery_init(started_ms);
     ble_configure(saved_config.bluetooth_enabled != 0U);

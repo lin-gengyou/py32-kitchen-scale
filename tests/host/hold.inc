@@ -3,6 +3,7 @@ static void hold_checks(void)
 {
     uint32_t now=10000;
     scale_config_defaults(&saved_config);
+    saved_config.auto_off_seconds=0;
     saved_config.point_count=1;saved_config.spans[0]=20000;saved_config.grams[0]=20;
     saved_config.zero_counts=100000;zero_counts=100000;reference_grams=20;
     tare_counts=0;stable_counts=0;sleeping=false;capture.kind=MEASURE_NONE;
@@ -16,6 +17,18 @@ static void hold_checks(void)
         moved|=weight_state.net_mg!=0;
     }
     assert(moved);
+    /* 空盘确认后随慢漂保持零，从当时的新基线加入0.5g必须解除空盘锁。 */
+    assert(zero_at(100000,now) == MEAS_OK);
+    for (unsigned i=0;i<150U;++i) {
+        now+=100;sample_add(100000+(int32_t)i*10,now);power_poll(now);
+        assert(zero_locked && weight_state.display_mg==0 && weight_state.stable);
+    }
+    assert(zero_counts>101400 && saved_config.zero_counts==100000);
+    int32_t base=zero_counts;
+    settle(base+500,&now);
+    assert(!zero_locked && weight_state.display_mg==500);
+    zero_counts=100000;
+    sample_reset();
     /* 旧保持区会吞掉0.35g偏移。稳定后应显示到0.1g分度。 */
     settle(100350,&now);
     assert(weight_state.net_mg==350 && weight_state.display_mg==400);
@@ -31,7 +44,7 @@ static void hold_checks(void)
         assert(weight_state.stable && weight_state.display_mg==20000);
     }
     assert(weight_state.net_mg>20075); /* 已超过旧版3/4分度更新点，仍应锁在20.0。 */
-    settle(120240,&now);assert(weight_state.display_mg==20200);
+    settle(120240,&now);assert(weight_state.display_mg==20000);
     bool unlocked=false;
     for(unsigned i=1;i<=160U;++i){
         now+=100;sample_add(120155+(int32_t)i*5,now);weight_update(now);
@@ -50,7 +63,8 @@ static void hold_checks(void)
     assert(weight_state.display_mg==0);
     settle(131000,&now);assert(tare_at(131000,now) == MEAS_OK);
     settle(151000,&now);assert(weight_state.display_mg==20000);
-    open_item(MENU_UNTARE,now);assert(weight_state.display_mg==30000);
+    open_item(MENU_GROSS,now);assert(weight_state.display_mg==30000 && tare_counts==10000);
+    open_item(MENU_GROSS,now);assert(weight_state.display_mg==20000 && tare_counts==10000);
     assert(tare_at(151000,now) == MEAS_OK);
     settle(141000,&now);assert(weight_state.display_mg==-10000);
     for(unsigned i=0;i<80U;++i){

@@ -9,10 +9,10 @@ import shutil
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="v2.3.1")
+    parser.add_argument("--version", default="v2.4.0")
     args = parser.parse_args()
     if not re.fullmatch(r"v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*", args.version):
-        parser.error("版本示例：v2.3.1")
+        parser.error("版本示例：v2.4.0")
     root = Path(__file__).resolve().parents[1]
     pairs = {"blink": "scale_py32f002a", "scale_basic": "scale_basic"}
     source = {name + "." + extension:
@@ -36,7 +36,7 @@ def main():
     files = [p for folder in ("src", "include", "boards", "ldscripts", "tools", "web", "tests")
              for p in (root / folder).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
     files.extend([root / "platformio.ini", root / "pyocd.yaml"])
-    manifest = {"version": version, "interface": "SW4 + HT1621B + ECB01C BLE", "serial_enabled": True, "power_default": "external", "tft": "interface proposal", "source_sha256": {
+    manifest = {"version": version, "interface": "SW4 + HT1621B + ECB01C BLE", "serial_enabled": True, "power_default": "two_alkaline_cells", "tft": "interface proposal", "source_sha256": {
         p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)
     }}
     (dest / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

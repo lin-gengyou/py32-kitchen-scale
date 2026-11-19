@@ -38,13 +38,13 @@ static void replay_checks(void)
     for(unsigned i=0;i<16U;++i){first+=trace[i].counts;last+=trace[n-16U+i].counts;}
     first=counts_divide(first,16);last=counts_divide(last,16);
     ScaleConfig previous=saved_config;unsigned writes=flash_program_count;
-    open_item(MENU_CAL,now);ui_event(KEY_HOLD,now);ui_cal_apply(first,now);
-    ui.value=20;ui_event(KEY_HOLD,now);ui_cal_apply(first+8297,now);
+    open_item(MENU_CAL,now);ui_event(KEY_DOUBLE,now);ui_cal_apply(first,now);
+    ui.value=20;ui_event(KEY_DOUBLE,now);ui_cal_apply(first+8297,now);
     assert(ui.page==UI_CAL_VERIFY);
     ui_cal_apply(last,now);
     assert(ui.page==UI_CAL_VERIFY && strcmp(ui.message,"drFt")==0);
     assert(flash_program_count==writes && memcmp(&previous,&saved_config,sizeof(previous))==0);
-    ui_event(KEY_DOUBLE,now);
+    ui_event(KEY_HOLD,now);
     printf("PASS: %u recorded empty-scale observations replayed; real drift remains visible;\n",n);
     printf("      drifted unload rejected with calibration and Flash writes unchanged.\n");
 }

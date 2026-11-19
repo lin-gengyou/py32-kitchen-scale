@@ -17,7 +17,7 @@ function render() {
   $('state').textContent = fresh ? statuses[latest.status] : ready ? '等待重量数据' : '连接你的电子秤';
   $('stability').textContent = good ? latest.stable ? '● 稳定' : '◌ 变化中' : '—';
   $('tare-info').textContent = good ? `皮重 ${latest.tare.toFixed(1)} g` : '皮重 —';
-  $('power').textContent = fresh && latest.battery >= 0 ? `电池 ${latest.battery}%` : '外部供电 / 电量未知';
+  $('power').textContent = fresh && latest.battery >= 0 ? `电池 ${latest.battery}%` : '电量未知';
   const unit = $('units').value; let value = '—';
   if (good) {
     const n = latest.net;

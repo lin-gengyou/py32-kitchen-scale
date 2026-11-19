@@ -54,15 +54,15 @@ static void completion_checks(void)
 
     saved_config=previous; reference_grams=500;zero_counts=100000;tare_counts=0;
     sleeping=false;empty_reference_known=true;ui.page=UI_WEIGH;stable_counts=64;
-    saved_config.battery_profile=1;
-    battery_configure(BATTERY_LIION_1S,1200);
-    for(unsigned i=0;i<3;++i){power_measure(2900,&now);}
-    settle(100000,&now);assert(weight_state.status==WEIGHT_LOW_BATTERY);
+    battery_configure(BATTERY_ALKALINE_2S,1200);
+    for(unsigned i=0;i<3;++i){power_measure(1750,&now);}
+    settle(100000,&now);
+    assert(battery_state()->status==BATTERY_CRITICAL && weight_state.status==WEIGHT_OK);
+    assert(set_tare(now) == MEAS_OK);
+    bat_state.supply_mv=4400;weight_update(now);assert(weight_state.status==WEIGHT_LOW_BATTERY);
     assert(set_tare(now) == MEAS_POWER);
     battery_accept_raw(0,0,now); weight_update(now); assert(weight_state.status==WEIGHT_POWER_ERROR);
-    battery_configure(1,1200);weight_update(now);assert(weight_state.status==WEIGHT_WAIT);
-    assert(set_tare(now) == MEAS_WAIT);
-    saved_config.battery_profile=0;battery_configure(0,1200);weight_update(now);
+    battery_configure(0,1200);weight_update(now);
     assert(weight_state.status==WEIGHT_OK && weight_state.battery_percent==-1);
 
     lcd_set_missing_mask(4);assert(lcd_body_width()==5);
@@ -72,11 +72,11 @@ static void completion_checks(void)
     lcd_weight(-5000000,false,true,false);
     for(unsigned i=8;i<32;++i){assert(frame[i]==positive[i]);} /* 负号移入标题 */
     assert(frame[2]!=positive[2] || frame[3]!=positive[3]);
-    open_item(MENU_ID,now);ui.value=123456;ui.cursor=5;
+    open_item(MENU_DATE,now);ui.value=2026;ui.cursor=3;
     ui.startup_ms=now-4000;ui.rendered_ms=now-200;ui_render(now);
     assert(frame[12]==0 && frame[13]==0);
-    open_item(MENU_DISPLAY,now);ui.choice=0;ui_event(KEY_HOLD,now);assert(lcd_body_width()==6);
-    open_item(MENU_DISPLAY,now);ui.choice=1;ui_event(KEY_HOLD,now);assert(lcd_body_width()==5);
+    open_item(MENU_DISPLAY,now);ui.choice=0;ui_event(KEY_DOUBLE,now);assert(lcd_body_width()==6);
+    open_item(MENU_DISPLAY,now);ui.choice=1;ui_event(KEY_DOUBLE,now);assert(lcd_body_width()==5);
 
     char out[256];ui.page=UI_WEIGH;ble_seen=false;ble_configure(true);
     settle(200000,&now);ble_test_receive("TAR",now);bluetooth_output(out,sizeof(out));assert(out[0]==0);
@@ -130,16 +130,12 @@ static void completion_checks(void)
     settle(100000,&now);power_poll(now);assert(startup_zero_pending);
     for(unsigned i=0;i<30U;++i){now+=100;sample_add(100000,now);power_poll(now);}
     assert(!startup_zero_pending);
-    open_item(MENU_SOURCE,now);ui.choice=2;ui_event(KEY_HOLD,now);
-    assert(saved_config.battery_profile==2);
-    open_item(MENU_VREF,now);ui.value=1234;ui_event(KEY_HOLD,now);
-    assert(saved_config.battery_reference_mv==1234);
-    open_item(MENU_BLUETOOTH,now);ui.choice=0;ui_event(KEY_HOLD,now);
+    open_item(MENU_BLUETOOTH,now);ui.choice=0;ui_event(KEY_DOUBLE,now);
     assert(!ble_enabled && saved_config.bluetooth_enabled==0);
 
     static const struct { UiMenu item; UiPage page; unsigned pages; } browse[] = {
-        {MENU_RAW, UI_RAW, 3}, {MENU_INFO, UI_INFO, 7},
-        {MENU_TEST, UI_TEST, 4}, {MENU_BATTERY, UI_BATTERY, 5},
+        {MENU_INFO, UI_INFO, 7},
+        {MENU_TEST, UI_TEST, 4}, {MENU_BATTERY, UI_BATTERY, 4},
     };
     unsigned writes=flash_program_count;
     for (unsigned i=0;i<sizeof(browse)/sizeof(browse[0]);++i) {
@@ -149,15 +145,14 @@ static void completion_checks(void)
             now+=200U;ui_render(now);ui_event(KEY_TAP,now);
         }
         assert(ui.info_page==browse[i].pages);
-        ui_event(KEY_HOLD,now);assert(ui.page==UI_MENU);
+        ui_event(KEY_DOUBLE,now);assert(ui.page==UI_MENU);
     }
     open_item(MENU_SLEEP,now);assert(sleeping && !enabled);
     wake_scale(now);assert(!sleeping && enabled);
-    open_item(MENU_EXIT,now);assert(ui.page==UI_WEIGH && flash_program_count==writes);
+    assert(ui.page==UI_WEIGH && flash_program_count==writes);
 
-    open_item(MENU_RESET,now);ui_event(KEY_DOUBLE,now);assert(saved_config.point_count==1);
-    display_interval_ms=100;
-    open_item(MENU_RESET,now);ui_event(KEY_HOLD,now);
+    open_item(MENU_RESET,now);ui_event(KEY_HOLD,now);assert(saved_config.point_count==1);
+    open_item(MENU_RESET,now);ui_event(KEY_DOUBLE,now);
     assert(saved_config.point_count==0 && saved_config.battery_profile==0 &&
         saved_config.battery_reference_mv==1200 && saved_config.lcd_missing_mask==4 &&
         ble_enabled && display_interval_ms==200);
